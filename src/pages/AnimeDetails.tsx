@@ -153,6 +153,7 @@ export default function AnimeDetails() {
         <img src={anime.banner || anime.poster} alt="" className="w-full h-full object-cover" />
         <div className="absolute inset-0 hero-fade" />
         <div className="absolute inset-0 bg-gradient-to-r from-bg/85 via-bg/25 to-transparent" />
+        <div className="absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/80 via-black/30 to-transparent" />
         <button
           onClick={() => navigate(-1)}
           className="absolute bottom-4 right-4 md:bottom-6 md:right-10 glass rounded-full p-2.5 hover:bg-white/15"

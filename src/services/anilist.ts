@@ -111,7 +111,13 @@ function detailsBanner(m: ALMedia): string | undefined {
 // by matching title + episode number.
 function mapEpisodes(m: ALMedia): Episode[] {
   const episodes: Episode[] = []
-  const count = m.episodes ?? m.nextAiringEpisode?.episode ?? m.airingSchedule?.nodes?.length ?? 0
+  // For ongoing series, only show episodes that have actually aired.
+  // nextAiringEpisode.episode is the NEXT one, so aired = episode - 1.
+  const airedCount =
+    m.status === 'RELEASING' && m.nextAiringEpisode
+      ? m.nextAiringEpisode.episode - 1
+      : m.episodes ?? m.airingSchedule?.nodes?.length ?? 0
+  const count = Math.max(airedCount, 0)
 
   if (count > 0 && count <= 500) {
     for (let i = 1; i <= count; i++) {

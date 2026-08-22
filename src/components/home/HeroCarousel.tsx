@@ -42,6 +42,7 @@ export default function HeroCarousel({ items }: { items: AnimeSummary[] }) {
           />
           <div className="absolute inset-0 hero-fade" />
           <div className="absolute inset-0 bg-gradient-to-r from-bg/80 via-bg/20 to-transparent" />
+          <div className="absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/80 via-black/30 to-transparent" />
         </motion.div>
       </AnimatePresence>
 
