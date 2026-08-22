@@ -15,24 +15,25 @@ RUN apt-get update && apt-get install -y \
   libgbm1 \
   libasound2 \
   libatspi2.0-0 \
-  libgtk-3-0 \
+  libgtk-3.0 \
   libx11-xcb1 \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
+ENV PLAYWRIGHT_BROWSERS_PATH=/app/.cache/ms-playwright
+
 COPY package*.json ./
 
 RUN npm ci
 
-RUN npx playwright install chromium --with-deps
+RUN npx playwright install chromium
 
 COPY . .
 
 RUN npm run build
 
 ENV PORT=3000
-ENV PLAYWRIGHT_BROWSERS_PATH=/app/.cache/ms-playwright
 
 EXPOSE 3000
 
