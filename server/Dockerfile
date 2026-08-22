@@ -23,11 +23,13 @@ WORKDIR /app
 
 COPY package*.json ./
 
-RUN npm ci --only=production
+RUN npm ci
 
 RUN npx playwright install chromium --with-deps
 
-COPY dist ./dist
+COPY . .
+
+RUN npm run build
 
 ENV PORT=3000
 ENV PLAYWRIGHT_BROWSERS_PATH=/app/.cache/ms-playwright
