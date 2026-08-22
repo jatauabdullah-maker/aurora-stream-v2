@@ -16,6 +16,9 @@ export function useDownloads() {
   const remove = useCallback((id: string) => downloadEngine.remove(id), [])
   const clearCompleted = useCallback(() => downloadEngine.clearCompleted(), [])
   const setConcurrency = useCallback((n: number) => downloadEngine.setConcurrency(n), [])
+  const updateResolverProgress = useCallback((id: string, progress: Parameters<typeof downloadEngine.updateResolverProgress>[1]) => {
+    downloadEngine.updateResolverProgress(id, progress)
+  }, [])
 
-  return { items, addDownload, pause, resume, remove, clearCompleted, setConcurrency }
+  return { items, addDownload, pause, resume, remove, clearCompleted, setConcurrency, updateResolverProgress }
 }

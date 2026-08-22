@@ -6,6 +6,7 @@ import type {
   StreamResponse,
   SearchFilters,
   PagedResult,
+  StreamSource,
 } from '../types'
 import {
   alTrending,
@@ -132,15 +133,29 @@ export function embedSourceForEpisode(episodeId: string): StreamResponse | null 
   }
 }
 
-export async function getStream(episodeId: string): Promise<StreamResponse> {
+export async function getStream(episodeId: string, options?: { animeTitle?: string; preferredQuality?: string }): Promise<StreamResponse> {
   if (http) {
     try {
       const { data } = await http.get(`/stream/${episodeId}`)
       if (data?.sources?.length) return data
     } catch {
+      // fall through to resolver/embed fallback
+    }
+  }
+  
+  const parsed = parseEpisodeId(episodeId)
+  if (parsed && resolverConfigured() && options?.animeTitle) {
+    try {
+      return await resolveStreamViaResolver(
+        options.animeTitle,
+        parsed.episode,
+        options.preferredQuality || '1080p'
+      )
+    } catch {
       // fall through to embed fallback
     }
   }
+  
   const embed = embedSourceForEpisode(episodeId)
   if (embed) return embed
   throw Object.assign(new Error('NO_BACKEND'), { code: 'NO_BACKEND' })
@@ -157,4 +172,107 @@ export async function verifySession(): Promise<boolean> {
   } catch {
     return true
   }
+}
+
+// ─── Resolver Integration (AnimePahe → direct MP4) ────────────────────────────
+
+const RESOLVER_API = (import.meta.env.VITE_RESOLVER_API as string | undefined) ?? ''
+
+export function resolverConfigured(): boolean {
+  return RESOLVER_API.trim() !== ''
+}
+
+export interface ResolveRequest {
+  animeTitle: string
+  episodeNumber: number
+  preferredQuality?: string
+}
+
+export interface ResolveProgress {
+  stage: 'searching' | 'found_anime' | 'finding_episode' | 'on_play_page' |
+         'solving_turnstile_animepahe' | 'on_pahewin' | 'solving_turnstile_kwik' |
+         'submitting_download' | 'complete' | 'error'
+  message: string
+  animeTitle: string
+  episodeNumber: number
+}
+
+export interface ResolveResponse {
+  success: boolean
+  sources?: StreamSource[]
+  subtitles?: { url: string; lang: string; label: string; default?: boolean }[]
+  error?: string
+  progress: ResolveProgress
+}
+
+export async function resolveStreamViaResolver(
+  animeTitle: string,
+  episodeNumber: number,
+  preferredQuality: string,
+  onProgress?: (progress: ResolveProgress) => void
+): Promise<StreamResponse> {
+  if (!resolverConfigured()) {
+    throw Object.assign(new Error('NO_RESOLVER'), { code: 'NO_RESOLVER' })
+  }
+  
+  const response = await fetch(RESOLVER_API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ animeTitle, episodeNumber, preferredQuality }),
+  })
+  
+  if (!response.ok) {
+    throw Object.assign(new Error('RESOLVER_ERROR'), { code: 'RESOLVER_ERROR', status: response.status })
+  }
+  
+  const reader = response.body?.getReader()
+  const decoder = new TextDecoder()
+  let lastProgress: ResolveProgress | null = null
+  
+  if (reader && onProgress) {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      const chunk = decoder.decode(value, { stream: true })
+      const lines = chunk.split('\n')
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const progress = JSON.parse(line.slice(6)) as ResolveProgress
+            lastProgress = progress
+            onProgress(progress)
+          } catch {
+            // ignore parse errors
+          }
+        }
+      }
+    }
+  }
+  
+  const text = await response.text()
+  let result: ResolveResponse
+  try {
+    result = JSON.parse(text)
+  } catch {
+    if (lastProgress) {
+      throw Object.assign(new Error(lastProgress.message), { code: 'RESOLVER_PARSE_ERROR' })
+    }
+    throw Object.assign(new Error('Invalid resolver response'), { code: 'RESOLVER_PARSE_ERROR' })
+  }
+  
+  if (!result.success || !result.sources?.length) {
+    throw Object.assign(new Error(result.error || 'Resolver returned no sources'), { code: 'RESOLVER_NO_SOURCES' })
+  }
+  
+  return {
+    sources: result.sources,
+    subtitles: result.subtitles || [],
+  }
+}
+
+export function parseEpisodeIdForResolver(episodeId: string): { anilistId: string; episode: number } | null {
+  const m = episodeId.match(/^al-(\d+)-e(\d+)$/)
+  if (!m) return null
+  return { anilistId: m[1], episode: Number(m[2]) }
 }

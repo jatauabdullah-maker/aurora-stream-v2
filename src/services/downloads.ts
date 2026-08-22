@@ -6,6 +6,13 @@ type Listener = () => void
 
 const LS_KEY = 'aurora:downloads'
 
+function getRefererForUrl(url: string): string | undefined {
+  if (url.includes('kwik.cx') || url.includes('owocdn.top')) {
+    return 'https://kwik.cx/'
+  }
+  return undefined
+}
+
 function load(): DownloadItem[] {
   try {
     return JSON.parse(localStorage.getItem(LS_KEY) || '[]')
@@ -44,9 +51,26 @@ class DownloadEngine {
 
   add(item: Omit<DownloadItem, 'status' | 'progress' | 'createdAt'>) {
     if (this.items.some((x) => x.id === item.id)) return
-    this.items.unshift({ ...item, status: 'pending', progress: 0, createdAt: Date.now() })
+    const newItem = { ...item, status: 'pending' as const, progress: 0, createdAt: Date.now() }
+    this.items.unshift(newItem)
     this.emit()
     this.pump()
+  }
+
+  updateResolverProgress(id: string, progress: DownloadItem['resolverProgress']) {
+    const it = this.items.find((x) => x.id === id)
+    if (it) {
+      it.resolverProgress = progress
+      if (progress?.stage === 'complete') {
+        it.status = 'pending'
+      } else if (progress?.stage === 'error') {
+        it.status = 'error'
+        it.error = progress.message
+      } else {
+        it.status = 'resolving'
+      }
+      this.emit()
+    }
   }
 
   pause(id: string) {
@@ -112,9 +136,14 @@ class DownloadEngine {
     this.emit()
     let lastTick = 0
     try {
+      const headers: Record<string, string> = {}
+      const referer = getRefererForUrl(it.url)
+      if (referer) headers['Referer'] = referer
+      
       const res = await axios.get<Blob>(it.url, {
         responseType: 'blob',
         signal: ctrl.signal,
+        headers,
         onDownloadProgress: (e) => {
           it.bytesDone = e.loaded
           it.bytesTotal = e.total ?? it.bytesTotal
@@ -130,6 +159,7 @@ class DownloadEngine {
       it.progress = 100
       it.blobId = it.id
       it.status = 'completed'
+      it.resolverProgress = undefined
     } catch (err) {
       if (ctrl.signal.aborted) {
         // paused or removed — state already set

@@ -34,8 +34,9 @@ export interface AnimeDetails extends AnimeSummary {
 export interface StreamSource {
   url: string
   quality: string // "1080p" | "720p" ...
-  type?: string // "mp4" | "hls"
+  type?: string // "mp4" | "hls" | "embed"
   sizeMB?: number
+  referer?: string
 }
 
 export interface SubtitleTrack {
@@ -91,12 +92,18 @@ export interface DownloadItem {
   quality: string
   url: string
   progress: number // 0-100
-  status: 'pending' | 'downloading' | 'paused' | 'completed' | 'error'
+  status: 'pending' | 'downloading' | 'paused' | 'completed' | 'error' | 'resolving'
   bytesTotal?: number
   bytesDone?: number
   blobId?: string
   error?: string
   createdAt: number
+  resolverProgress?: {
+    stage: 'searching' | 'found_anime' | 'finding_episode' | 'on_play_page' | 
+           'solving_turnstile_animepahe' | 'on_pahewin' | 'solving_turnstile_kwik' | 
+           'submitting_download' | 'complete' | 'error'
+    message: string
+  }
 }
 
 export interface Settings {

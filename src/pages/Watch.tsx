@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import VideoPlayer from '../components/player/VideoPlayer'
-import { getAnime, getStream, getEpisodes, backendConfigured } from '../services/api'
+import { getAnime, getStream, getEpisodes, backendConfigured, resolveStreamViaResolver, resolverConfigured } from '../services/api'
 import { useApp } from '../context/AppContext'
 import { useProgressTracker } from '../hooks/usePlayer'
 import { formatDuration, formatBytes, classNames } from '../utils/helpers'
@@ -52,11 +52,13 @@ export default function Watch() {
       })
     }
 
-    getStream(episodeId)
+    getStream(episodeId, { animeTitle: anime?.title, preferredQuality: settings.preferredQuality })
       .then(setStream)
       .catch((err) => {
         if (!dl) {
           if (err?.code === 'NO_BACKEND' || !backendConfigured()) {
+            setError('NO_SOURCE')
+          } else if (err?.code === 'NO_RESOLVER') {
             setError('NO_SOURCE')
           } else {
             setError('Stream unavailable for this episode.')
@@ -86,6 +88,46 @@ export default function Watch() {
     if (source.type === 'embed') {
       return toast('Downloads aren\'t available for this source — stream it instead.', { icon: '📡' })
     }
+    
+    // If source is from resolver (mp4 type), we need to resolve it first
+    if (source.type === 'mp4' && resolverConfigured()) {
+      const parsed = episode.id.match(/^al-(\d+)-e(\d+)$/)
+      if (parsed) {
+        const episodeNumber = parseInt(parsed[2], 10)
+        
+        // Add download with resolving status
+        addDownload({
+          id: episode.id,
+          animeId: anime.id,
+          animeTitle: anime.title,
+          episodeNumber: episode.number,
+          poster: anime.poster,
+          quality: source.quality,
+          url: source.url,
+        })
+        
+        try {
+          const resolved = await resolveStreamViaResolver(
+            anime.title,
+            episodeNumber,
+            settings.preferredQuality,
+            (progress) => {
+              downloadEngine.updateResolverProgress(episode.id, progress)
+            }
+          )
+          
+          if (resolved.sources?.length) {
+            // The download engine will pick up the resolved URL and start downloading
+            toast.success('Download started')
+          }
+        } catch (err) {
+          console.error('Resolver failed:', err)
+          toast.error('Failed to resolve download source')
+        }
+        return
+      }
+    }
+    
     addDownload({
       id: episode.id,
       animeId: anime.id,

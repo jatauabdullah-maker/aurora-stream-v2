@@ -106,6 +106,10 @@ function Section({
               </p>
               {d.status === 'error' ? (
                 <p className="text-xs text-accent mt-1">{d.error ?? 'Failed'}</p>
+              ) : d.status === 'resolving' && d.resolverProgress ? (
+                <p className="text-xs text-brand mt-1 flex items-center gap-1">
+                  <span className="animate-spin">⟳</span> {d.resolverProgress.message}
+                </p>
               ) : (
                 <div className="flex items-center gap-2 mt-1.5">
                   <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden max-w-xs">
