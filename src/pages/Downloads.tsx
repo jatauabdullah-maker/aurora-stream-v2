@@ -26,7 +26,7 @@ export default function Downloads() {
   const usagePct = storage && storage.quota > 0 ? (storage.usage / storage.quota) * 100 : 0
 
   return (
-    <div className="px-4 md:px-10 pt-20 max-w-4xl mx-auto">
+    <div className="px-4 md:px-10 pt-24 max-w-4xl mx-auto">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">Downloads</h1>
         {completed.length > 0 && (

@@ -4,7 +4,7 @@ import HeroCarousel from '../components/home/HeroCarousel'
 import AnimeRow from '../components/anime/AnimeRow'
 import ContinueWatchingRow from '../components/home/ContinueWatchingRow'
 import { HeroSkeleton, RowSkeleton } from '../components/common/Skeletons'
-import { getTrending, getPopular, getRecent } from '../services/api'
+import { getTrending, getPopular, getRecent, getJustAired } from '../services/api'
 import { useApp } from '../context/AppContext'
 import { uniqBy } from '../utils/helpers'
 import type { AnimeSummary } from '../types'
@@ -13,6 +13,7 @@ export default function Home() {
   const [trending, setTrending] = useState<AnimeSummary[]>([])
   const [popular, setPopular] = useState<AnimeSummary[]>([])
   const [recent, setRecent] = useState<AnimeSummary[]>([])
+  const [justAired, setJustAired] = useState<AnimeSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const { continueWatching, refreshProgress } = useApp()
@@ -22,11 +23,12 @@ export default function Home() {
     let live = true
     ;(async () => {
       try {
-        const [t, p, r] = await Promise.allSettled([getTrending(), getPopular(), getRecent()])
+        const [t, p, r, j] = await Promise.allSettled([getTrending(), getPopular(), getRecent(), getJustAired()])
         if (!live) return
         setTrending(t.status === 'fulfilled' ? t.value : [])
         setPopular(p.status === 'fulfilled' ? p.value : [])
         setRecent(r.status === 'fulfilled' ? r.value : [])
+        setJustAired(j.status === 'fulfilled' ? j.value : [])
         const allFailed = [t, p, r].every((x) => x.status === 'rejected')
         if (allFailed) {
           setError('Could not load the anime catalog. Check your internet connection — AniList should be reachable.')
@@ -69,6 +71,7 @@ export default function Home() {
           {heroItems.length > 0 && <HeroCarousel items={heroItems} />}
           <div className="relative z-10 -mt-2">
             {continueWatching.length > 0 && <ContinueWatchingRow items={continueWatching} />}
+            {justAired.length > 0 && <AnimeRow title="Just Aired" items={justAired} />}
             <AnimeRow title="Trending Now" items={trending} />
             <AnimeRow title="Popular" items={popular} />
             <AnimeRow title="New Releases" items={recent} />

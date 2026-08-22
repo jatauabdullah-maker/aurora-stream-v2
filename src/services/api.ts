@@ -15,6 +15,8 @@ import {
   alGenres,
   alAnime,
   alEpisodes,
+  alJustAired,
+  alRelated,
 } from './anilist'
 
 /**
@@ -55,6 +57,14 @@ export async function getPopular(): Promise<AnimeSummary[]> {
 }
 export async function getRecent(): Promise<AnimeSummary[]> {
   return (await maybeBackend('/recent')) ?? (await alNewReleases())
+}
+
+export async function getJustAired(): Promise<AnimeSummary[]> {
+  return alJustAired()
+}
+
+export async function getRelated(id: string): Promise<AnimeSummary[]> {
+  return alRelated(id)
 }
 
 export async function searchAnime(filters: SearchFilters): Promise<PagedResult<AnimeSummary>> {
@@ -109,12 +119,12 @@ export function embedSourceForEpisode(episodeId: string): StreamResponse | null 
     sources: [
       {
         url: `https://tryembed.us.cc/embed/anime/${anilistId}/${episode}/sub`,
-        quality: '720p',
+        quality: '1080p',
         type: 'embed',
       },
       {
         url: `https://tryembed.us.cc/embed/anime/${anilistId}/${episode}/dub`,
-        quality: '720p Dub',
+        quality: '1080p Dub',
         type: 'embed',
       },
     ],

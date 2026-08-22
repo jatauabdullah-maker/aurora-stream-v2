@@ -38,6 +38,16 @@ export default function AnimeCard({ anime, overlayList = true }: { anime: AnimeS
               {anime.type}
             </div>
           )}
+          {anime.justAiredEpisode != null && (
+            <div className="absolute bottom-2 left-2 bg-emerald-500/90 rounded-md px-1.5 py-0.5 text-[10px] font-bold">
+              EP {anime.justAiredEpisode} aired
+            </div>
+          )}
+          {anime.relationType && (
+            <div className="absolute bottom-2 left-2 glass rounded-md px-1.5 py-0.5 text-[10px] font-bold capitalize">
+              {anime.relationType.replace(/_/g, ' ').toLowerCase()}
+            </div>
+          )}
         </div>
       </Link>
       <div className="flex items-start justify-between gap-1 mt-2">

@@ -2,21 +2,23 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
-import { getAnime, getStream } from '../services/api'
+import { getAnime, getStream, getRelated } from '../services/api'
 import { useApp } from '../context/AppContext'
 import { useDownloads } from '../hooks/useDownloads'
 import { getProgress } from '../services/storage'
 import { formatDuration, classNames } from '../utils/helpers'
+import AnimeRow from '../components/anime/AnimeRow'
 import {
   IconPlay, IconPlus, IconCheck, IconStar, IconDownload,
   IconChevronDown, IconBack, IconClock,
 } from '../components/common/Icons'
-import type { AnimeDetails as Details, Episode } from '../types'
+import type { AnimeDetails as Details, Episode, AnimeSummary } from '../types'
 
 export default function AnimeDetails() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [anime, setAnime] = useState<Details | null>(null)
+  const [related, setRelated] = useState<AnimeSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [openSeason, setOpenSeason] = useState<number | null>(1)
@@ -28,6 +30,7 @@ export default function AnimeDetails() {
     if (!id) return
     setLoading(true)
     setError(null)
+    setRelated([])
     getAnime(id)
       .then((d) => {
         setAnime(d)
@@ -36,6 +39,7 @@ export default function AnimeDetails() {
       })
       .catch(() => setError('Failed to load this title. Check your API connection.'))
       .finally(() => setLoading(false))
+    getRelated(id).then(setRelated).catch(() => setRelated([]))
   }, [id])
 
   const seasons = useMemo(() => {
@@ -85,6 +89,9 @@ export default function AnimeDetails() {
       const source =
         stream.sources.find((s) => s.quality === settings.preferredQuality) ?? stream.sources[0]
       if (!source) return toast.error('No source available for this episode')
+      if (source.type === 'embed') {
+        return toast('Downloads aren\'t available for this source — stream it instead.', { icon: '📡' })
+      }
       addDownload({
         id: ep.id,
         animeId: anime.id,
@@ -103,6 +110,10 @@ export default function AnimeDetails() {
   const downloadSeason = async (season: number) => {
     const eps = seasons.get(season) ?? []
     if (!eps.length) return
+    const probe = await getStream(eps[0].id).catch(() => null)
+    if (probe?.sources?.[0]?.type === 'embed') {
+      return toast('Downloads aren\'t available for this source — stream it instead.', { icon: '📡' })
+    }
     setDownloadingAll(true)
     let queued = 0
     for (const ep of eps) {
@@ -306,6 +317,12 @@ export default function AnimeDetails() {
           })}
         </div>
       </div>
+
+      {related.length > 0 && (
+        <div className="max-w-6xl mx-auto">
+          <AnimeRow title="Related Titles" items={related} />
+        </div>
+      )}
     </div>
   )
 }

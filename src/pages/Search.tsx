@@ -66,7 +66,7 @@ export default function Search() {
   }, [params])
 
   return (
-    <div className="px-4 md:px-10 pt-20 max-w-[1600px] mx-auto">
+    <div className="px-4 md:px-10 pt-24 max-w-[1600px] mx-auto">
       <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">Discover</h1>
 
       <div className="glass rounded-2xl p-4 md:p-5 mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">

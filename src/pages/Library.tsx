@@ -16,7 +16,7 @@ export default function Library() {
   }, [refreshProgress])
 
   return (
-    <div className="px-4 md:px-10 pt-20 max-w-[1400px] mx-auto">
+    <div className="px-4 md:px-10 pt-24 max-w-[1400px] mx-auto">
       <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">My Library</h1>
 
       <div className="flex gap-2 mt-5">

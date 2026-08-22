@@ -122,7 +122,6 @@ function mapEpisodes(m: ALMedia): Episode[] {
         season: 1,
         airedAt: aired ? new Date(aired.airingAt * 1000).toISOString() : undefined,
         title: `Episode ${i}`,
-        thumbnail: m.bannerImage || m.coverImage?.extraLarge || undefined,
       })
     }
   }
@@ -172,16 +171,15 @@ export async function alPopular(page = 1, perPage = 15): Promise<AnimeSummary[]>
 }
 
 export async function alNewReleases(page = 1, perPage = 15): Promise<AnimeSummary[]> {
-  const now = Math.floor(Date.now() / 1000)
   const data = await gql<{ Page: { media: ALMedia[] } }>(
-    `query ($page: Int, $perPage: Int, $now: Int) {
+    `query ($page: Int, $perPage: Int) {
       Page(page: $page, perPage: $perPage) {
-        media(sort: START_DATE_DESC, type: ANIME, isAdult: false, status: RELEASING, startDate_lesser: $now) {
+        media(sort: START_DATE_DESC, type: ANIME, isAdult: false, status: RELEASING) {
           ${MEDIA_FIELDS}
         }
       }
     }`,
-    { page, perPage, now }
+    { page, perPage }
   )
   return data.Page.media.map(mapSummary)
 }
@@ -242,6 +240,72 @@ export async function alSearch(
 export async function alGenres(): Promise<string[]> {
   const data = await gql<{ GenreCollection: string[] }>(`{ GenreCollection }`)
   return (data.GenreCollection ?? []).filter((g) => g !== 'Hentai')
+}
+
+export async function alJustAired(perPage = 15): Promise<AnimeSummary[]> {
+  const now = Math.floor(Date.now() / 1000)
+  const weekAgo = now - 7 * 24 * 60 * 60
+  const data = await gql<{
+    Page: { airingSchedules: { episode: number; airingAt: number; media: ALMedia | null }[] }
+  }>(
+    `query ($perPage: Int, $now: Int, $weekAgo: Int) {
+      Page(page: 1, perPage: $perPage) {
+        airingSchedules(airingAt_greater: $weekAgo, airingAt_lesser: $now, sort: TIME_DESC) {
+          episode
+          airingAt
+          media { ${MEDIA_FIELDS} }
+        }
+      }
+    }`,
+    { perPage: perPage * 2, now, weekAgo }
+  )
+  const seen = new Set<number>()
+  const out: AnimeSummary[] = []
+  for (const s of data.Page.airingSchedules) {
+    const m = s.media
+    if (!m || seen.has(m.id)) continue
+    if (m.format && m.format !== 'TV') continue
+    seen.add(m.id)
+    const summary = mapSummary(m)
+    summary.justAiredEpisode = s.episode
+    out.push(summary)
+    if (out.length >= perPage) break
+  }
+  return out
+}
+
+export async function alRelated(id: string): Promise<AnimeSummary[]> {
+  const numericId = Number(id.replace(/^al-/, ''))
+  const data = await gql<{ Media: { relations: { edges: { relationType: string; node: ALMedia }[] } } }>(
+    `query ($id: Int) {
+      Media(id: $id, type: ANIME) {
+        relations {
+          edges {
+            relationType
+            node { ${MEDIA_FIELDS} }
+          }
+        }
+      }
+    }`,
+    { id: numericId }
+  )
+  const seen = new Set<number>([numericId])
+  const out: AnimeSummary[] = []
+  const edges = data.Media.relations.edges ?? []
+  const order = ['SEQUEL', 'PREQUEL', 'SIDE_STORY', 'PARENT', 'ALTERNATIVE', 'SPIN_OFF']
+  const sorted = [...edges].sort(
+    (a, b) => order.indexOf(a.relationType) - order.indexOf(b.relationType)
+  )
+  for (const e of sorted) {
+    const n = e.node
+    if (!n || seen.has(n.id)) continue
+    if (n.format && !['TV', 'MOVIE', 'OVA', 'ONA', 'SPECIAL'].includes(n.format)) continue
+    seen.add(n.id)
+    const s = mapSummary(n)
+    s.relationType = e.relationType
+    out.push(s)
+  }
+  return out
 }
 
 export async function alAnime(id: string): Promise<AnimeDetails> {

@@ -84,7 +84,7 @@ export default function Watch() {
     const source = stream.sources.find((s) => s.quality === settings.preferredQuality) ?? stream.sources[0]
     if (!source) return toast.error('No source available')
     if (source.type === 'embed') {
-      return toast.error('Direct download is not available for this source yet — stream it instead.')
+      return toast('Downloads aren\'t available for this source — stream it instead.', { icon: '📡' })
     }
     addDownload({
       id: episode.id,
@@ -100,7 +100,7 @@ export default function Watch() {
 
   if (loading) {
     return (
-      <div className="px-4 md:px-10 pt-20 max-w-6xl mx-auto">
+      <div className="px-4 md:px-10 pt-24 max-w-6xl mx-auto">
         <div className="skeleton aspect-video w-full rounded-xl" />
         <div className="skeleton h-7 w-1/2 rounded mt-4" />
       </div>
@@ -108,7 +108,7 @@ export default function Watch() {
   }
 
   return (
-    <div className="px-4 md:px-10 pt-20 max-w-6xl mx-auto">
+    <div className="px-4 md:px-10 pt-24 max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-4 gap-3">
         <button
           onClick={() => navigate(`/anime/${id}`)}

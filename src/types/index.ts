@@ -9,6 +9,8 @@ export interface AnimeSummary {
   status?: string // Ongoing, Completed
   genres?: string[]
   episodeCount?: number
+  relationType?: string // SEQUEL, PREQUEL... (related titles only)
+  justAiredEpisode?: number // latest aired episode (Just Aired row only)
 }
 
 export interface Episode {

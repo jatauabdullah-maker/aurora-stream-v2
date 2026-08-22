@@ -1,22 +1,29 @@
+import { useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { useDownloads } from '../hooks/useDownloads'
 import { usePWAInstall } from '../hooks/usePWA'
 import { classNames } from '../utils/helpers'
-import { IconDevice, IconCheck } from '../components/common/Icons'
+import { IconDevice, IconCheck, IconBack } from '../components/common/Icons'
 import toast from 'react-hot-toast'
-
-const QUALITIES = ['2160p', '1080p', '720p', '480p', '360p']
 
 export default function Settings() {
   const { settings, updateSettings } = useApp()
   const { setConcurrency } = useDownloads()
   const { canInstall, installed, promptInstall } = usePWAInstall()
-
-  const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'
+  const navigate = useNavigate()
 
   return (
-    <div className="px-4 md:px-10 pt-20 max-w-2xl mx-auto">
-      <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">Settings</h1>
+    <div className="px-4 md:px-10 pt-24 max-w-2xl mx-auto">
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => navigate(-1)}
+          className="glass rounded-full p-2 hover:bg-white/15 transition-colors"
+          aria-label="Back"
+        >
+          <IconBack width={16} height={16} />
+        </button>
+        <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">Settings</h1>
+      </div>
 
       <div className="space-y-4 mt-8">
         <Section title="App">
@@ -48,17 +55,6 @@ export default function Settings() {
         </Section>
 
         <Section title="Playback">
-          <Row label="Preferred quality" hint="Used for streaming picks and downloads">
-            <select
-              value={settings.preferredQuality}
-              onChange={(e) => updateSettings({ preferredQuality: e.target.value })}
-              className="bg-surface2 border border-line rounded-lg px-3 py-2 text-sm outline-none focus:border-brand/60"
-            >
-              {QUALITIES.map((q) => (
-                <option key={q} value={q}>{q}</option>
-              ))}
-            </select>
-          </Row>
           <Row label="Autoplay next episode" hint="Jump to the next episode when the current one ends">
             <Toggle
               on={settings.autoplayNext}
@@ -83,22 +79,6 @@ export default function Settings() {
               ))}
             </select>
           </Row>
-          <Row label="Merge subtitles" hint="Embed subtitles into downloaded files (requires backend support)">
-            <Toggle
-              on={settings.downloadSubtitlesMerged}
-              onChange={(v) => updateSettings({ downloadSubtitlesMerged: v })}
-            />
-          </Row>
-        </Section>
-
-        <Section title="Content Source">
-          <Row label="API endpoint" hint="Set VITE_API_BASE_URL in .env.local and restart">
-            <code className="text-xs bg-surface2 px-3 py-2 rounded-lg text-brand break-all">{apiBase}</code>
-          </Row>
-          <p className="text-xs text-muted leading-relaxed mt-2">
-            Aurora connects to a content API you provide. This client does not include or endorse any
-            particular source — plug in your own backend serving licensed or personal media.
-          </p>
         </Section>
       </div>
     </div>
