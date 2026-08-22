@@ -1,0 +1,311 @@
+import { useEffect, useMemo, useState } from 'react'
+import { useParams, Link, useNavigate } from 'react-router-dom'
+import { motion, AnimatePresence } from 'framer-motion'
+import toast from 'react-hot-toast'
+import { getAnime, getStream } from '../services/api'
+import { useApp } from '../context/AppContext'
+import { useDownloads } from '../hooks/useDownloads'
+import { getProgress } from '../services/storage'
+import { formatDuration, classNames } from '../utils/helpers'
+import {
+  IconPlay, IconPlus, IconCheck, IconStar, IconDownload,
+  IconChevronDown, IconBack, IconClock,
+} from '../components/common/Icons'
+import type { AnimeDetails as Details, Episode } from '../types'
+
+export default function AnimeDetails() {
+  const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+  const [anime, setAnime] = useState<Details | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [openSeason, setOpenSeason] = useState<number | null>(1)
+  const [downloadingAll, setDownloadingAll] = useState(false)
+  const { isInWatchlist, toggleWatchlist, settings } = useApp()
+  const { addDownload, items: downloads } = useDownloads()
+
+  useEffect(() => {
+    if (!id) return
+    setLoading(true)
+    setError(null)
+    getAnime(id)
+      .then((d) => {
+        setAnime(d)
+        const seasons = [...new Set(d.episodes.map((e) => e.season ?? 1))]
+        setOpenSeason(seasons[0] ?? 1)
+      })
+      .catch(() => setError('Failed to load this title. Check your API connection.'))
+      .finally(() => setLoading(false))
+  }, [id])
+
+  const seasons = useMemo(() => {
+    if (!anime) return new Map<number, Episode[]>()
+    const map = new Map<number, Episode[]>()
+    for (const ep of anime.episodes) {
+      const s = ep.season ?? 1
+      if (!map.has(s)) map.set(s, [])
+      map.get(s)!.push(ep)
+    }
+    for (const list of map.values()) list.sort((a, b) => a.number - b.number)
+    return map
+  }, [anime])
+
+  if (loading) {
+    return (
+      <div className="-mt-16">
+        <div className="skeleton h-[46vh] w-full" />
+        <div className="px-4 md:px-10 mt-6 max-w-5xl mx-auto grid md:grid-cols-[220px_1fr] gap-8">
+          <div className="skeleton aspect-[2/3] rounded-xl -mt-28 relative z-10" />
+          <div className="space-y-3 pt-4">
+            <div className="skeleton h-8 w-2/3 rounded" />
+            <div className="skeleton h-4 w-1/3 rounded" />
+            <div className="skeleton h-24 w-full rounded" />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (error || !anime) {
+    return (
+      <div className="px-4 md:px-10 pt-24 max-w-xl mx-auto text-center">
+        <div className="glass rounded-2xl p-10">
+          <p className="text-muted text-sm">{error ?? 'Not found'}</p>
+          <button onClick={() => navigate(-1)} className="mt-5 text-brand text-sm font-semibold">← Go back</button>
+        </div>
+      </div>
+    )
+  }
+
+  const inList = isInWatchlist(anime.id)
+
+  const downloadEpisode = async (ep: Episode) => {
+    try {
+      const stream = await getStream(ep.id)
+      const source =
+        stream.sources.find((s) => s.quality === settings.preferredQuality) ?? stream.sources[0]
+      if (!source) return toast.error('No source available for this episode')
+      addDownload({
+        id: ep.id,
+        animeId: anime.id,
+        animeTitle: anime.title,
+        episodeNumber: ep.number,
+        poster: anime.poster,
+        quality: source.quality,
+        url: source.url,
+      })
+      toast.success(`Queued: Episode ${ep.number}`)
+    } catch {
+      toast.error(`Could not get source for Episode ${ep.number}`)
+    }
+  }
+
+  const downloadSeason = async (season: number) => {
+    const eps = seasons.get(season) ?? []
+    if (!eps.length) return
+    setDownloadingAll(true)
+    let queued = 0
+    for (const ep of eps) {
+      if (downloads.some((d) => d.id === ep.id)) continue
+      try {
+        const stream = await getStream(ep.id)
+        const source =
+          stream.sources.find((s) => s.quality === settings.preferredQuality) ?? stream.sources[0]
+        if (!source) continue
+        addDownload({
+          id: ep.id,
+          animeId: anime.id,
+          animeTitle: anime.title,
+          episodeNumber: ep.number,
+          poster: anime.poster,
+          quality: source.quality,
+          url: source.url,
+        })
+        queued++
+      } catch {
+        /* skip failed */
+      }
+    }
+    setDownloadingAll(false)
+    toast.success(queued > 0 ? `Queued ${queued} episodes` : 'All episodes already queued')
+  }
+
+  const firstUnwatched = anime.episodes.find((e) => {
+    const p = getProgress(e.id)
+    return !p || p.positionSec < p.durationSec * 0.9
+  })
+
+  return (
+    <div className="-mt-16">
+      {/* Backdrop */}
+      <div className="relative h-[46vh] min-h-[320px] w-full overflow-hidden">
+        <img src={anime.banner || anime.poster} alt="" className="w-full h-full object-cover" />
+        <div className="absolute inset-0 hero-fade" />
+        <div className="absolute inset-0 bg-gradient-to-r from-bg/85 via-bg/25 to-transparent" />
+        <button
+          onClick={() => navigate(-1)}
+          className="absolute bottom-4 right-4 md:bottom-6 md:right-10 glass rounded-full p-2.5 hover:bg-white/15"
+          aria-label="Back"
+        >
+          <IconBack width={18} height={18} />
+        </button>
+      </div>
+
+      <div className="px-4 md:px-10 max-w-6xl mx-auto grid md:grid-cols-[230px_1fr] gap-6 md:gap-10">
+        {/* Poster */}
+        <div className="-mt-24 md:-mt-32 relative z-10 w-40 md:w-full">
+          <img
+            src={anime.poster}
+            alt={anime.title}
+            className="w-full aspect-[2/3] object-cover rounded-xl ring-1 ring-line shadow-2xl shadow-black/60"
+          />
+        </div>
+
+        {/* Info */}
+        <div className="pt-2 md:pt-4 min-w-0">
+          <h1 className="text-2xl md:text-4xl font-extrabold tracking-tight">{anime.title}</h1>
+          <div className="flex flex-wrap items-center gap-2 mt-3 text-xs font-medium">
+            {anime.score != null && (
+              <span className="glass px-2 py-1 rounded-md flex items-center gap-1">
+                <IconStar width={11} height={11} className="text-yellow-400" /> {anime.score.toFixed(1)}
+              </span>
+            )}
+            {anime.year && <span className="glass px-2 py-1 rounded-md">{anime.year}</span>}
+            {anime.type && <span className="glass px-2 py-1 rounded-md text-brand">{anime.type}</span>}
+            {anime.status && <span className="glass px-2 py-1 rounded-md">{anime.status}</span>}
+            {anime.episodeCount != null && (
+              <span className="glass px-2 py-1 rounded-md flex items-center gap-1">
+                <IconClock width={11} height={11} /> {anime.episodeCount} episodes
+              </span>
+            )}
+          </div>
+          {anime.genres && (
+            <div className="flex flex-wrap gap-2 mt-3">
+              {anime.genres.map((g) => (
+                <Link
+                  key={g}
+                  to={`/search?genre=${encodeURIComponent(g)}`}
+                  className="text-xs bg-surface2 border border-line rounded-full px-3 py-1 hover:border-brand/60 hover:text-brand transition-colors"
+                >
+                  {g}
+                </Link>
+              ))}
+            </div>
+          )}
+          {anime.synopsis && <p className="text-sm text-muted leading-relaxed mt-4 max-w-3xl">{anime.synopsis}</p>}
+
+          <div className="flex flex-wrap gap-3 mt-6">
+            {firstUnwatched && (
+              <Link
+                to={`/watch/${anime.id}/${firstUnwatched.id}`}
+                className="flex items-center gap-2 bg-gradient-to-r from-brand2 to-brand px-6 py-3 rounded-xl font-bold shadow-lg shadow-brand2/40 hover:scale-[1.03] transition-transform"
+              >
+                <IconPlay width={18} height={18} />
+                {firstUnwatched.number === 1 ? 'Start Watching' : `Resume EP ${firstUnwatched.number}`}
+              </Link>
+            )}
+            <button
+              onClick={() => {
+                const added = toggleWatchlist({ id: anime.id, title: anime.title, poster: anime.poster, addedAt: Date.now() })
+                toast.success(added ? 'Added to My List' : 'Removed from My List')
+              }}
+              className="flex items-center gap-2 glass px-5 py-3 rounded-xl font-semibold hover:bg-white/15"
+            >
+              {inList ? <IconCheck width={18} height={18} /> : <IconPlus width={18} height={18} />}
+              {inList ? 'In My List' : 'My List'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Episodes */}
+      <div className="px-4 md:px-10 max-w-6xl mx-auto mt-14">
+        <h2 className="text-xl font-bold mb-4">Episodes</h2>
+        <div className="space-y-3">
+          {[...seasons.keys()].map((season) => {
+            const eps = seasons.get(season) ?? []
+            const open = openSeason === season
+            return (
+              <div key={season} className="glass rounded-2xl overflow-hidden">
+                <div className="flex items-center justify-between px-5 py-4">
+                  <button
+                    onClick={() => setOpenSeason(open ? null : season)}
+                    className="flex items-center gap-3 font-semibold text-left"
+                  >
+                    <IconChevronDown
+                      width={18} height={18}
+                      className={classNames('transition-transform', open ? 'rotate-180' : '')}
+                    />
+                    {seasons.size > 1 ? `Season ${season}` : 'Episodes'}
+                    <span className="text-muted text-xs font-normal">({eps.length})</span>
+                  </button>
+                  <button
+                    onClick={() => downloadSeason(season)}
+                    disabled={downloadingAll}
+                    className="flex items-center gap-2 text-sm font-semibold text-brand hover:text-white glass px-4 py-2 rounded-xl transition-colors disabled:opacity-40"
+                  >
+                    <IconDownload width={15} height={15} />
+                    {downloadingAll ? 'Queueing...' : 'Download All'}
+                  </button>
+                </div>
+
+                <AnimatePresence>
+                  {open && (
+                    <motion.ul
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.25 }}
+                      className="border-t border-line"
+                    >
+                      {eps.map((ep) => {
+                        const p = getProgress(ep.id)
+                        const pct = p && p.durationSec > 0 ? Math.round((p.positionSec / p.durationSec) * 100) : 0
+                        const dl = downloads.find((d) => d.id === ep.id)
+                        return (
+                          <li key={ep.id} className="flex items-center gap-3 px-5 py-3 hover:bg-white/5 transition-colors border-b border-line/50 last:border-0">
+                            <span className="text-muted text-sm font-mono w-8 shrink-0">{String(ep.number).padStart(2, '0')}</span>
+                            {ep.thumbnail && (
+                              <img src={ep.thumbnail} alt="" loading="lazy" className="hidden sm:block w-24 aspect-video object-cover rounded-lg" />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">{ep.title ?? `Episode ${ep.number}`}</p>
+                              <div className="flex items-center gap-2 text-[11px] text-muted">
+                                {ep.duration != null && <span>{formatDuration(ep.duration)}</span>}
+                                {pct > 0 && <span className="text-brand">• {pct}% watched</span>}
+                                {dl?.status === 'completed' && <span className="text-emerald-400">• Downloaded</span>}
+                                {dl?.status === 'downloading' && <span className="text-brand">• {dl.progress}%</span>}
+                              </div>
+                              {pct > 0 && (
+                                <div className="w-24 h-0.5 bg-white/10 rounded mt-1">
+                                  <div className="h-full bg-brand rounded" style={{ width: `${pct}%` }} />
+                                </div>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => downloadEpisode(ep)}
+                              className="text-muted hover:text-brand p-2 transition-colors"
+                              aria-label={`Download episode ${ep.number}`}
+                            >
+                              <IconDownload width={17} height={17} />
+                            </button>
+                            <Link
+                              to={`/watch/${anime.id}/${ep.id}`}
+                              className="shrink-0 glass rounded-lg px-3 py-1.5 text-xs font-semibold hover:bg-white/15"
+                            >
+                              Play
+                            </Link>
+                          </li>
+                        )
+                      })}
+                    </motion.ul>
+                  )}
+                </AnimatePresence>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}

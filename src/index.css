@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0b0e1a;
+  --color-surface: #131728;
+  --color-surface2: #1a2038;
+  --color-brand: #a678ff;
+  --color-brand2: #6b46ff;
+  --color-accent: #ff4d7e;
+  --color-muted: #8b93b0;
+  --color-line: rgba(255, 255, 255, 0.08);
+
+  --font-display: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-bg text-white font-display antialiased;
+  overscroll-behavior-y: none;
+}
+
+::-webkit-scrollbar { width: 10px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #2a3152;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover { background: #3a4270; }
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+.glass {
+  background: rgba(19, 23, 40, 0.72);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.text-gradient {
+  background: linear-gradient(120deg, #c9a6ff, #6b46ff 55%, #ff4d7e);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hero-fade {
+  background: linear-gradient(to top, #0b0e1a 4%, rgba(11, 14, 26, 0.6) 45%, rgba(11, 14, 26, 0.15) 100%);
+}
+
+.card-ring {
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+.card-ring:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: 0 12px 40px -8px rgba(107, 70, 255, 0.45);
+}
+
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #161b30 25%, #1e2542 50%, #161b30 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s infinite linear;
+}
+
+/* Plyr dark theme overrides */
+.plyr {
+  --plyr-color-main: #a678ff;
+  --plyr-video-background: #000;
+  --plyr-menu-background: rgba(19, 23, 40, 0.95);
+  --plyr-menu-color: #fff;
+  --plyr-control-icon-size: 16px;
+  border-radius: 12px;
+  font-family: 'Inter', sans-serif;
+}
