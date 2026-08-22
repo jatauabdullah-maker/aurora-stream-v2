@@ -215,60 +215,60 @@ export async function resolveStreamViaResolver(
     throw Object.assign(new Error('NO_RESOLVER'), { code: 'NO_RESOLVER' })
   }
   
-  const response = await fetch(RESOLVER_API, {
+  // Start the resolve job
+  const startResponse = await fetch(RESOLVER_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ animeTitle, episodeNumber, preferredQuality }),
   })
   
-  if (!response.ok) {
-    throw Object.assign(new Error('RESOLVER_ERROR'), { code: 'RESOLVER_ERROR', status: response.status })
+  if (!startResponse.ok) {
+    throw Object.assign(new Error('RESOLVER_ERROR'), { code: 'RESOLVER_ERROR', status: startResponse.status })
   }
   
-  const reader = response.body?.getReader()
-  const decoder = new TextDecoder()
-  let lastProgress: ResolveProgress | null = null
+  const startData = await startResponse.json()
+  const jobId = startData.jobId
   
-  if (reader && onProgress) {
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      const chunk = decoder.decode(value, { stream: true })
-      const lines = chunk.split('\n')
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const progress = JSON.parse(line.slice(6)) as ResolveProgress
-            lastProgress = progress
-            onProgress(progress)
-          } catch {
-            // ignore parse errors
-          }
-        }
+  if (!jobId) {
+    throw Object.assign(new Error('Invalid resolver response: no jobId'), { code: 'RESOLVER_NO_JOB_ID' })
+  }
+  
+  // Poll for job completion
+  const maxPolls = 120 // 10 minutes at 5s intervals
+  let polls = 0
+  
+  while (polls < maxPolls) {
+    await new Promise(resolve => setTimeout(resolve, 5000))
+    polls++
+    
+    const pollResponse = await fetch(`${RESOLVER_API}/${jobId}`)
+    if (!pollResponse.ok) {
+      throw Object.assign(new Error('RESOLVER_POLL_ERROR'), { code: 'RESOLVER_POLL_ERROR', status: pollResponse.status })
+    }
+    
+    const jobData = await pollResponse.json()
+    
+    if (jobData.progress && onProgress) {
+      onProgress(jobData.progress)
+    }
+    
+    if (jobData.status === 'completed' && jobData.result) {
+      const result = jobData.result
+      if (!result.success || !result.sources?.length) {
+        throw Object.assign(new Error(result.error || 'Resolver returned no sources'), { code: 'RESOLVER_NO_SOURCES' })
+      }
+      return {
+        sources: result.sources,
+        subtitles: result.subtitles || [],
       }
     }
-  }
-  
-  const text = await response.text()
-  let result: ResolveResponse
-  try {
-    result = JSON.parse(text)
-  } catch {
-    if (lastProgress) {
-      throw Object.assign(new Error(lastProgress.message), { code: 'RESOLVER_PARSE_ERROR' })
+    
+    if (jobData.status === 'failed') {
+      throw Object.assign(new Error(jobData.error || 'Resolver job failed'), { code: 'RESOLVER_JOB_FAILED' })
     }
-    throw Object.assign(new Error('Invalid resolver response'), { code: 'RESOLVER_PARSE_ERROR' })
   }
   
-  if (!result.success || !result.sources?.length) {
-    throw Object.assign(new Error(result.error || 'Resolver returned no sources'), { code: 'RESOLVER_NO_SOURCES' })
-  }
-  
-  return {
-    sources: result.sources,
-    subtitles: result.subtitles || [],
-  }
+  throw Object.assign(new Error('Resolver timed out'), { code: 'RESOLVER_TIMEOUT' })
 }
 
 export function parseEpisodeIdForResolver(episodeId: string): { anilistId: string; episode: number } | null {

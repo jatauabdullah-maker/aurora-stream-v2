@@ -1,10 +1,17 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import { resolveStream, closeBrowser, getBrowser } from './resolver.js';
-import type { ResolveRequest, ResolveResponse, HealthResponse } from './types.js';
+import type { ResolveRequest, ResolveResponse, HealthResponse, ResolveProgress } from './types.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// In-memory job store (use Redis in production)
+const jobs = new Map<string, { status: 'pending' | 'running' | 'completed' | 'failed'; progress?: ResolveProgress; result?: ResolveResponse; error?: string }>();
+
+function generateJobId(): string {
+  return `job_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
 
 app.use(cors({
   origin: '*',
@@ -25,98 +32,111 @@ app.get('/api/health', async (_req: Request, res: Response<HealthResponse>) => {
   }
 });
 
-app.post('/api/resolve-stream', async (req: Request<{}, {}, ResolveRequest>, res: Response<ResolveResponse>) => {
+// Start a resolve job
+app.post('/api/resolve-stream', async (req: Request<{}, {}, ResolveRequest>, res: Response) => {
   const { animeTitle, episodeNumber, preferredQuality } = req.body;
   
   if (!animeTitle || !episodeNumber) {
     return res.status(400).json({
       success: false,
       error: 'animeTitle and episodeNumber are required',
-      progress: {
-        stage: 'error',
-        message: 'Missing required parameters',
-        animeTitle: animeTitle || '',
-        episodeNumber: episodeNumber || 0
-      }
     });
   }
   
+  const jobId = generateJobId();
   const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
-  console.log(`[${new Date().toISOString()}] Resolve request from ${clientIp}: "${animeTitle}" EP ${episodeNumber} (${preferredQuality || '1080p'})`);
+  console.log(`[${new Date().toISOString()}] Resolve job ${jobId} from ${clientIp}: "${animeTitle}" EP ${episodeNumber} (${preferredQuality || '1080p'})`);
   
-  const sseHeaders = {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no'
-  };
+  jobs.set(jobId, { status: 'pending' });
   
-  const wantsSSE = req.headers.accept?.includes('text/event-stream');
-  
-  let sseResponse: Response | null = null;
-  
-  const sendProgress = (progress: ResolveResponse['progress']) => {
-    if (wantsSSE && sseResponse && !sseResponse.writableEnded) {
-      sseResponse.write(`data: ${JSON.stringify(progress)}\n\n`);
-    }
-  };
-  
-  if (wantsSSE) {
-    res.writeHead(200, sseHeaders);
-    sseResponse = res;
-    res.write(`data: ${JSON.stringify({ stage: 'searching', message: 'Starting...', animeTitle, episodeNumber })}\n\n`);
-  }
-  
-  try {
-    const result = await resolveStream(
-      { animeTitle, episodeNumber, preferredQuality },
-      sendProgress
-    );
+  // Start resolution in background
+  (async () => {
+    const job = jobs.get(jobId);
+    if (!job) return;
     
-    if (wantsSSE && sseResponse && !sseResponse.writableEnded) {
-      sseResponse.write(`data: ${JSON.stringify(result.progress)}\n\n`);
-      sseResponse.end();
-    } else {
-      res.json(result);
-    }
+    job.status = 'running';
+    job.progress = { stage: 'searching', message: `Searching for "${animeTitle}"...`, animeTitle, episodeNumber };
     
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Internal server error';
-    console.error('Resolve error:', error);
-    
-    const errorResponse: ResolveResponse = {
-      success: false,
-      error: errorMessage,
-      progress: {
-        stage: 'error',
-        message: errorMessage,
-        animeTitle,
-        episodeNumber
+    try {
+      const sendProgress = (progress: ResolveProgress) => {
+        const currentJob = jobs.get(jobId);
+        if (currentJob) currentJob.progress = progress;
+      };
+      
+      const result = await resolveStream(
+        { animeTitle, episodeNumber, preferredQuality },
+        sendProgress
+      );
+      
+      const finalJob = jobs.get(jobId);
+      if (finalJob) {
+        finalJob.status = result.success ? 'completed' : 'failed';
+        finalJob.result = result;
+        if (!result.success) finalJob.error = result.error;
       }
-    };
-    
-    if (wantsSSE && sseResponse && !sseResponse.writableEnded) {
-      sseResponse.write(`data: ${JSON.stringify(errorResponse.progress)}\n\n`);
-      sseResponse.end();
-    } else {
-      res.status(500).json(errorResponse);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Internal server error';
+      console.error('Resolve error:', error);
+      
+      const finalJob = jobs.get(jobId);
+      if (finalJob) {
+        finalJob.status = 'failed';
+        finalJob.error = errorMessage;
+        finalJob.progress = { stage: 'error', message: errorMessage, animeTitle, episodeNumber };
+      }
+    }
+  })();
+  
+  // Return job ID immediately
+  res.json({ jobId, status: 'pending' });
+});
+
+// Poll for job status
+app.get('/api/resolve-stream/:jobId', (req: Request<{ jobId: string }>, res: Response) => {
+  const { jobId } = req.params;
+  const job = jobs.get(jobId);
+  
+  if (!job) {
+    return res.status(404).json({ success: false, error: 'Job not found' });
+  }
+  
+  res.json({
+    jobId,
+    status: job.status,
+    progress: job.progress,
+    result: job.result,
+    error: job.error,
+  });
+});
+
+// Clean up old jobs periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [jobId, job] of jobs.entries()) {
+    // Extract timestamp from jobId
+    const match = jobId.match(/job_(\d+)_/);
+    if (match) {
+      const timestamp = parseInt(match[1], 10);
+      if (now - timestamp > 10 * 60 * 1000) { // 10 minutes
+        jobs.delete(jobId);
+      }
     }
   }
-});
+}, 60000);
 
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error('Server error:', err);
   res.status(500).json({ 
     success: false, 
-    error: 'Internal server error',
-    progress: { stage: 'error', message: 'Internal server error', animeTitle: '', episodeNumber: 0 }
+    error: 'Internal server error'
   });
 });
 
 const server = app.listen(PORT, () => {
   console.log(`🚀 Aurora Resolver running on port ${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/api/health`);
-  console.log(`   Resolve: POST http://localhost:${PORT}/api/resolve-stream`);
+  console.log(`   Start resolve: POST http://localhost:${PORT}/api/resolve-stream`);
+  console.log(`   Poll status: GET http://localhost:${PORT}/api/resolve-stream/:jobId`);
 });
 
 process.on('SIGTERM', async () => {
