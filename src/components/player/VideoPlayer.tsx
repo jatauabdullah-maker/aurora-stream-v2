@@ -30,6 +30,11 @@ function EmbedPlayer({
   })
 
   useEffect(() => {
+    const byPref = sources.find((s) => s.quality === preferredQuality)
+    setActive(byPref ?? sources[0])
+  }, [sources, preferredQuality])
+
+  useEffect(() => {
     const handler = (e: MessageEvent) => {
       const d = e.data
       if (!d || typeof d !== 'object' || d.type !== 'PLAYER_EVENT') return

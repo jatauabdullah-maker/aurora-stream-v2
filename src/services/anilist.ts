@@ -190,20 +190,24 @@ export async function alSearch(
   filters: SearchFilters
 ): Promise<{ items: AnimeSummary[]; page: number; totalPages: number }> {
   const conditions: string[] = ['type: ANIME', 'isAdult: false']
+  const varDefs: string[] = ['$page: Int', '$perPage: Int']
   const vars: Record<string, unknown> = { page: filters.page ?? 1, perPage: 20 }
   let sortClause = 'POPULARITY_DESC'
 
   if (filters.q) {
     conditions.push('search: $search')
+    varDefs.push('$search: String')
     vars.search = filters.q
     sortClause = 'SEARCH_MATCH'
   }
   if (filters.genre) {
     conditions.push('genre: $genre')
+    varDefs.push('$genre: String')
     vars.genre = filters.genre
   }
   if (filters.year) {
     conditions.push('seasonYear: $year')
+    varDefs.push('$year: Int')
     vars.year = filters.year
   }
   if (filters.status) {
@@ -213,13 +217,14 @@ export async function alSearch(
       Upcoming: 'NOT_YET_RELEASED',
     }
     conditions.push('status: $status')
+    varDefs.push('$status: MediaStatus')
     vars.status = map[filters.status] ?? 'FINISHED'
   }
 
   const data = await gql<{
     Page: { media: ALMedia[]; pageInfo: { currentPage: number; lastPage: number } }
   }>(
-    `query ($page: Int, $perPage: Int, $search: String, $genre: String, $year: Int, $status: MediaStatus) {
+    `query (${varDefs.join(', ')}) {
       Page(page: $page, perPage: $perPage) {
         pageInfo { currentPage lastPage hasNextPage }
         media(sort: ${sortClause}, ${conditions.join(', ')}) { ${MEDIA_FIELDS} }
@@ -260,6 +265,7 @@ export async function alEpisodes(id: string): Promise<Episode[]> {
   const data = await gql<{ Media: ALMedia }>(
     `query ($id: Int) {
       Media(id: $id, type: ANIME) {
+        id
         episodes
         bannerImage
         coverImage { extraLarge }
