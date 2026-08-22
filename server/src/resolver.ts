@@ -1,5 +1,9 @@
-import { chromium, type Browser, type Page, type Frame } from 'playwright';
+import { chromium } from 'playwright-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import type { Browser, Page } from 'playwright';
 import type { ResolveRequest, ResolveResponse, ResolveProgress, StreamSource } from './types.js';
+
+chromium.use(StealthPlugin());
 
 const ANIMEPAHE_BASE = 'https://animepahe.pw';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
@@ -24,14 +28,79 @@ async function getBrowser(): Promise<BrowserSession> {
       '--disable-accelerated-2d-canvas',
       '--no-first-run',
       '--no-zygote',
-      '--single-process',
       '--disable-gpu',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-features=IsolateOrigins,site-per-process',
+      '--disable-site-isolation-trials',
     ],
   });
-  const page = await browser.newPage({ userAgent: USER_AGENT });
-  page.setDefaultTimeout(60000);
+  const context = await browser.newContext({
+    userAgent: USER_AGENT,
+    viewport: { width: 1366, height: 768 },
+    locale: 'en-US',
+    timezoneId: 'America/Los_Angeles',
+    permissions: [],
+    extraHTTPHeaders: {
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    },
+  });
+  const page = await context.newPage();
+  page.setDefaultTimeout(90000);
+  
+  // Hide webdriver property
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+  });
+  
   browserInstance = { browser, page };
   return browserInstance;
+}
+
+async function waitForTurnstile(page: Page, maxWaitMs = 30000): Promise<boolean> {
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < maxWaitMs) {
+    const title = await page.title();
+    if (title !== 'Just a moment...') {
+      return true;
+    }
+    
+    // Check if turnstile frame exists and try to click it
+    const frames = page.frames();
+    const turnstileFrame = frames.find(f => f.url().includes('challenges.cloudflare.com') && f.url().includes('turnstile'));
+    
+    if (turnstileFrame) {
+      try {
+        const frameElement = await turnstileFrame.frameElement();
+        if (frameElement) {
+          const box = await frameElement.boundingBox();
+          if (box) {
+            const clickX = box.x + 32;
+            const clickY = box.y + box.height / 2;
+            
+            await page.mouse.move(clickX, clickY, { steps: 15 });
+            await page.waitForTimeout(800);
+            await page.mouse.click(clickX, clickY);
+            await page.waitForTimeout(8000);
+            
+            const newTitle = await page.title();
+            if (newTitle !== 'Just a moment...') {
+              return true;
+            }
+          }
+        }
+      } catch (e) {
+        // Continue waiting
+      }
+    }
+    
+    await page.waitForTimeout(2000);
+  }
+  
+  return false;
 }
 
 async function solveTurnstile(page: Page, context: string = 'page'): Promise<boolean> {
@@ -39,62 +108,37 @@ async function solveTurnstile(page: Page, context: string = 'page'): Promise<boo
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
+      console.log(`[${context}] Turnstile solve attempt ${attempt}/${maxRetries}`);
+      
+      // Wait for page to load
+      await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
       await page.waitForTimeout(3000);
       
-      const frames = page.frames();
-      const turnstileFrame = frames.find(f => f.url().includes('challenges.cloudflare.com') && f.url().includes('turnstile'));
-      
-      if (!turnstileFrame) {
-        const title = await page.title();
-        if (title !== 'Just a moment...') {
-          return true;
-        }
-        if (attempt === maxRetries) return false;
-        await page.waitForTimeout(2000);
-        continue;
-      }
-      
-      const frameElement = await turnstileFrame.frameElement();
-      if (!frameElement) {
-        if (attempt === maxRetries) return false;
-        await page.waitForTimeout(2000);
-        continue;
-      }
-      
-      const box = await frameElement.boundingBox();
-      if (!box) {
-        if (attempt === maxRetries) return false;
-        await page.waitForTimeout(2000);
-        continue;
-      }
-      
-      const clickX = box.x + 32;
-      const clickY = box.y + box.height / 2;
-      
-      await page.mouse.move(clickX, clickY, { steps: 10 });
-      await page.waitForTimeout(500);
-      await page.mouse.click(clickX, clickY);
-      await page.waitForTimeout(6000);
-      
-      const newTitle = await page.title();
-      if (newTitle !== 'Just a moment...') {
+      const solved = await waitForTurnstile(page, 30000);
+      if (solved) {
+        console.log(`[${context}] Turnstile solved successfully`);
         return true;
       }
       
       if (attempt < maxRetries) {
-        await page.waitForTimeout(2000);
+        console.log(`[${context}] Turnstile not solved, retrying...`);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await page.waitForTimeout(5000);
       }
     } catch (error) {
-      console.error(`Turnstile solve attempt ${attempt} failed:`, error);
-      if (attempt === maxRetries) return false;
-      await page.waitForTimeout(2000);
+      console.error(`[${context}] Turnstile solve attempt ${attempt} failed:`, error);
+      if (attempt < maxRetries) {
+        await page.waitForTimeout(5000);
+      }
     }
   }
   
+  console.error(`[${context}] All Turnstile solve attempts failed`);
   return false;
 }
 
 async function searchAnime(page: Page, title: string): Promise<string | null> {
+  console.log(`[search] Searching for: ${title}`);
   await page.goto(ANIMEPAHE_BASE, { waitUntil: 'domcontentloaded' });
   
   const turnstileSolved = await solveTurnstile(page, 'search');
@@ -102,9 +146,9 @@ async function searchAnime(page: Page, title: string): Promise<string | null> {
     throw new Error('Failed to solve Turnstile on animepahe homepage');
   }
   
-  await page.waitForSelector('input[name="q"].input-search', { timeout: 10000 });
+  await page.waitForSelector('input[name="q"].input-search', { timeout: 15000 });
   await page.fill('input[name="q"].input-search', title);
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(2000);
   
   const autocompleteSelectors = [
     '[role="listbox"] [role="option"]',
@@ -116,13 +160,14 @@ async function searchAnime(page: Page, title: string): Promise<string | null> {
   
   for (const selector of autocompleteSelectors) {
     try {
-      await page.waitForSelector(selector, { timeout: 5000 });
+      await page.waitForSelector(selector, { timeout: 8000 });
       const links = await page.$$eval(selector, (els, baseUrl) => 
         els.map(el => (el as HTMLAnchorElement).href).filter(href => href.includes('/anime/'))
       , ANIMEPAHE_BASE);
       
       if (links.length > 0) {
         resultLink = links[0];
+        console.log(`[search] Found anime link: ${resultLink}`);
         break;
       }
     } catch {
@@ -132,12 +177,13 @@ async function searchAnime(page: Page, title: string): Promise<string | null> {
   
   if (!resultLink) {
     try {
-      await page.waitForSelector('a[href*="/anime/"]', { timeout: 5000 });
+      await page.waitForSelector('a[href*="/anime/"]', { timeout: 8000 });
       const links = await page.$$eval('a[href*="/anime/"]', (els) => 
         els.map(el => (el as HTMLAnchorElement).href)
       );
       if (links.length > 0) {
         resultLink = links[0];
+        console.log(`[search] Found anime link (fallback): ${resultLink}`);
       }
     } catch {
       throw new Error(`No anime found for "${title}"`);
@@ -151,7 +197,7 @@ async function findEpisode(page: Page, episodeNumber: number): Promise<string | 
   let currentPage = page;
   
   for (let pageNum = 1; pageNum <= 50; pageNum++) {
-    await currentPage.waitForTimeout(1000);
+    await currentPage.waitForTimeout(2000);
     
     const turnstileSolved = await solveTurnstile(currentPage, 'anime-page');
     if (!turnstileSolved) {
@@ -159,7 +205,7 @@ async function findEpisode(page: Page, episodeNumber: number): Promise<string | 
     }
     
     try {
-      await currentPage.waitForSelector('a.play[href*="/play/"]', { timeout: 10000 });
+      await currentPage.waitForSelector('a.play[href*="/play/"]', { timeout: 15000 });
     } catch {
       break;
     }
@@ -174,6 +220,7 @@ async function findEpisode(page: Page, episodeNumber: number): Promise<string | 
     }, episodeNumber);
     
     if (episodeLinks.length > 0) {
+      console.log(`[findEpisode] Found episode ${episodeNumber}: ${episodeLinks[0].href}`);
       return episodeLinks[0].href;
     }
     
@@ -205,14 +252,14 @@ async function findEpisode(page: Page, episodeNumber: number): Promise<string | 
 }
 
 async function getPlayPageInfo(page: Page): Promise<{ session: string; provider: string; kwikUrl: string; qualityLinks: { quality: string; url: string }[] } | null> {
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(2000);
   
   const turnstileSolved = await solveTurnstile(page, 'play-page');
   if (!turnstileSolved) {
     throw new Error('Failed to solve Turnstile on play page');
   }
   
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(3000);
   
   const scriptContent = await page.evaluate(() => {
     const scripts = Array.from(document.querySelectorAll('script'));
@@ -231,9 +278,11 @@ async function getPlayPageInfo(page: Page): Promise<{ session: string; provider:
   );
   
   if (!sessionMatch || !providerMatch || !urlMatch) {
+    console.log('[getPlayPageInfo] Failed to extract play page info');
     return null;
   }
   
+  console.log(`[getPlayPageInfo] Found ${qualityLinks.length} quality links`);
   return {
     session: sessionMatch[1],
     provider: providerMatch[1],
@@ -243,6 +292,7 @@ async function getPlayPageInfo(page: Page): Promise<{ session: string; provider:
 }
 
 async function navigatePaheWin(page: Page, paheWinUrl: string): Promise<string | null> {
+  console.log(`[navigatePaheWin] Navigating to: ${paheWinUrl}`);
   await page.goto(paheWinUrl, { waitUntil: 'domcontentloaded' });
   
   const turnstileSolved = await solveTurnstile(page, 'pahe.win');
@@ -250,7 +300,7 @@ async function navigatePaheWin(page: Page, paheWinUrl: string): Promise<string |
     throw new Error('Failed to solve Turnstile on pahe.win');
   }
   
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(2000);
   
   const redirectLink = await page.$('a.redirect');
   if (!redirectLink) {
@@ -258,16 +308,19 @@ async function navigatePaheWin(page: Page, paheWinUrl: string): Promise<string |
       els.map(el => (el as HTMLAnchorElement).href)
     );
     if (allLinks.length > 0) {
+      console.log(`[navigatePaheWin] Found kwik.cx link (fallback): ${allLinks[0]}`);
       return allLinks[0];
     }
     throw new Error('No redirect link found on pahe.win');
   }
   
   const href = await redirectLink.getAttribute('href');
+  console.log(`[navigatePaheWin] Found redirect: ${href}`);
   return href;
 }
 
 async function submitKwikForm(page: Page, kwikFUrl: string): Promise<{ url: string; filename: string } | null> {
+  console.log(`[submitKwikForm] Navigating to: ${kwikFUrl}`);
   await page.goto(kwikFUrl, { waitUntil: 'domcontentloaded' });
   
   const turnstileSolved = await solveTurnstile(page, 'kwik.cx/f');
@@ -275,22 +328,23 @@ async function submitKwikForm(page: Page, kwikFUrl: string): Promise<{ url: stri
     throw new Error('Failed to solve Turnstile on kwik.cx/f');
   }
   
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(2000);
   
   const form = await page.$('form[action*="kwik.cx/d/"]');
   if (!form) {
     throw new Error('Download form not found on kwik.cx/f page');
   }
   
-  const downloadPromise = page.waitForEvent('download', { timeout: 30000 });
+  console.log('[submitKwikForm] Submitting download form...');
+  const downloadPromise = page.waitForEvent('download', { timeout: 60000 });
   
   await form.evaluate((f: HTMLFormElement) => f.submit());
   
   const download = await downloadPromise;
   const suggestedFilename = download.suggestedFilename();
-  
   const downloadUrl = download.url();
   
+  console.log(`[submitKwikForm] Got download URL: ${downloadUrl}`);
   return { url: downloadUrl, filename: suggestedFilename };
 }
 
@@ -382,6 +436,7 @@ async function resolveStream(request: ResolveRequest, onProgress?: (progress: Re
     
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[resolveStream] Error:', error);
     emitProgress('error', errorMessage);
     return {
       success: false,
