@@ -51,21 +51,36 @@ app.get('/api/debug/check', (_req: Request, res: Response) => {
   enqueue(async () => {
     try {
       const out = await withPage(async (page) => {
-        await page.goto('https://animepahe.pw', { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => undefined);
-        const samples: { t: number; title: string; frame: boolean; bodyLen: number }[] = [];
-        for (const wait of [4000, 5000, 5000, 6000]) {
-          await page.waitForTimeout(wait);
+        const requests: { url: string; status: number | null }[] = [];
+        const listener = (res: { url(): string; status(): number }) => {
+          const u = res.url();
+          if (/stream_data|anixx|premilkyway|\.m3u8|tryembed\.us\.cc\/api/i.test(u)) {
+            let status: number | null = null;
+            try { status = res.status(); } catch { status = null; }
+            requests.push({ url: u.slice(0, 120), status });
+          }
+        };
+        page.on('response', listener);
+        try {
+          await page.goto('https://tryembed.us.cc/embed/anime/21/3/sub', { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => undefined);
+          await page.waitForTimeout(5000);
+          const clicked = await page.evaluate(() => {
+            const v = document.querySelector('video') as HTMLVideoElement | null;
+            if (v) { v.muted = true; return v.play().then(() => 'played').catch((e) => 'play-blocked: ' + e.message); }
+            const btn = document.querySelector('.plyr__control--overlaid, .jw-display-icon-container, [class*="play"]');
+            if (btn) { (btn as HTMLElement).click(); return 'clicked'; }
+            return 'no-video-no-btn';
+          }).catch((e) => 'eval-failed: ' + String(e).slice(0, 80));
+          await page.waitForTimeout(12000);
+          const videoState = await page.evaluate(() => {
+            const v = document.querySelector('video') as HTMLVideoElement | null;
+            return v ? { readyState: v.readyState, currentTime: v.currentTime, src: (v.currentSrc || v.src || '').slice(0, 80) } : null;
+          }).catch(() => null);
           const title = await page.title().catch(() => '');
-          const frame = page.frames().find((f) => f.url().includes('challenges.cloudflare.com'));
-          const bodyLen = frame
-            ? await frame.evaluate(() => document.body?.innerHTML?.length ?? -1).catch(() => -1)
-            : -1;
-          samples.push({ t: samples.reduce((a, s) => a + 0, 0) + wait, title: title.slice(0, 40), frame: !!frame, bodyLen });
-          if (!/just a moment/i.test(title)) break;
+          return { title: title.slice(0, 50), clickResult: clicked, videoState, requests: requests.slice(0, 15) };
+        } finally {
+          page.off('response', listener);
         }
-        const finalTitle = await page.title().catch(() => '');
-        const hasSearch = !!(await page.$('input[name="q"]').catch(() => null));
-        return { url: page.url().slice(0, 80), finalTitle: finalTitle.slice(0, 50), passed: !/just a moment/i.test(finalTitle), hasSearch, samples };
       });
       res.json({ ok: true, ...out });
     } catch (e) {
