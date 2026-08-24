@@ -97,6 +97,7 @@ export interface DownloadItem {
   bytesDone?: number
   blobId?: string
   error?: string
+  external?: boolean // downloaded via the browser extension — file is in the Downloads folder
   createdAt: number
   resolverProgress?: {
     stage: 'queued' | 'searching' | 'found_anime' | 'finding_episode' | 'on_play_page' |

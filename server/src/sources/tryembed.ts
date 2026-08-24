@@ -162,7 +162,7 @@ export const tryembedSource: SourceAdapter = {
   name: 'tryembed',
 
   async resolve(ctx, request, onProgress) {
-    const { animeTitle, episodeNumber } = request;
+    const { episodeNumber } = request;
     const anilistId = request.anilistId;
     if (!anilistId) {
       return { episodeNumber, success: false, error: 'tryembed source requires anilistId' };

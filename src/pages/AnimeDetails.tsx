@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
-import { getAnime, getRelated, resolverConfigured } from '../services/api'
+import { getAnime, getRelated } from '../services/api'
 import { useApp } from '../context/AppContext'
 import { useDownloads } from '../hooks/useDownloads'
 import { getProgress } from '../services/storage'
@@ -89,9 +89,6 @@ export default function AnimeDetails() {
   const inList = isInWatchlist(anime.id)
 
   const downloadEpisode = async (ep: Episode) => {
-    if (!resolverConfigured()) {
-      return toast('Downloads need the resolver service. Set VITE_RESOLVER_API in settings.', { icon: '⚙️' })
-    }
     const existing = downloads.find((d) => d.id === ep.id)
     if (existing && ['pending', 'downloading', 'resolving', 'completed'].includes(existing.status)) {
       return toast(existing.status === 'completed' ? 'Already downloaded' : 'Already in your downloads', {
@@ -108,16 +105,13 @@ export default function AnimeDetails() {
       },
       settings.preferredQuality || '720p'
     )
-    if (result.ok) toast.success(`Resolving Episode ${ep.number}...`)
+    if (result.ok) toast.success(`Episode ${ep.number}: saved`)
     else toast.error(`Episode ${ep.number}: ${result.error}`)
   }
 
   const downloadSeason = (season: number) => {
     const eps = seasons.get(season) ?? []
     if (!eps.length) return
-    if (!resolverConfigured()) {
-      return toast('Downloads need the resolver service. Set VITE_RESOLVER_API in settings.', { icon: '⚙️' })
-    }
     setBatchSeason(season)
     setBatchOpen(true)
   }
@@ -316,7 +310,7 @@ export default function AnimeDetails() {
                               <div className="flex items-center gap-2 text-[11px] text-muted">
                                 {ep.duration != null && <span>{formatDuration(ep.duration)}</span>}
                                 {pct > 0 && <span className="text-brand">• {pct}% watched</span>}
-                                {dl?.status === 'completed' && <span className="text-emerald-400">• Downloaded</span>}
+                                {dl?.status === 'completed' && <span className="text-emerald-400">• {dl.external ? 'In Downloads folder' : 'Downloaded'}</span>}
                                 {dl?.status === 'downloading' && <span className="text-brand">• {dl.progress}%</span>}
                               </div>
                               {pct > 0 && (

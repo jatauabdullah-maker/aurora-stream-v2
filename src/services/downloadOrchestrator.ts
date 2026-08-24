@@ -8,6 +8,7 @@ import {
   type ResolvedSource,
   type BatchJobState,
 } from './api'
+import { checkExtension, startExtensionDownload } from './extension'
 import { downloadEngine } from './downloads'
 
 const QUALITY_ORDER = ['1080p', '720p', '360p']
@@ -36,8 +37,36 @@ export async function startSingleDownload(
   quality: string,
   onProgress?: (stage: string, message: string) => void
 ): Promise<{ ok: boolean; error?: string; source?: ResolvedSource }> {
+  // 1. Aurora Downloader extension (runs in the user's browser — no server needed)
+  const ext = await checkExtension()
+  if (ext.installed) {
+    downloadEngine.addResolving({
+      id: target.episodeId,
+      animeId: target.animeId,
+      animeTitle: target.animeTitle,
+      episodeNumber: target.episodeNumber,
+      poster: target.poster,
+      quality,
+      url: '',
+    })
+    const result = await startExtensionDownload(
+      { animeTitle: target.animeTitle, episodeNumber: target.episodeNumber, quality },
+      (p) => {
+        downloadEngine.updateResolverProgress(target.episodeId, { stage: p.stage, message: p.message })
+        onProgress?.(p.stage, p.message)
+      }
+    )
+    if (result.ok) {
+      downloadEngine.markCompletedExternal(target.episodeId)
+      return { ok: true }
+    }
+    downloadEngine.markResolveError(target.episodeId, result.error ?? 'Extension download failed')
+    return { ok: false, error: result.error }
+  }
+
+  // 2. Server-side resolver
   if (!resolverConfigured()) {
-    return { ok: false, error: 'Download service not configured. Set VITE_RESOLVER_API.' }
+    return { ok: false, error: 'No download method available. Install the Aurora Downloader (Settings → Downloads) or set VITE_RESOLVER_API.' }
   }
 
   downloadEngine.addResolving({

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import VideoPlayer from '../components/player/VideoPlayer'
-import { getAnime, getStream, getEpisodes, backendConfigured, resolverConfigured } from '../services/api'
+import { getAnime, getStream, getEpisodes, backendConfigured } from '../services/api'
 import { useApp } from '../context/AppContext'
 import { useProgressTracker } from '../hooks/usePlayer'
 import { formatDuration, formatBytes, classNames } from '../utils/helpers'
@@ -90,10 +90,6 @@ export default function Watch() {
     setDlDialogOpen(false)
     setFailure(null)
 
-    if (!resolverConfigured()) {
-      return toast('Downloads need the resolver service. Set VITE_RESOLVER_API in settings.', { icon: '⚙️' })
-    }
-
     const result = await startSingleDownload(
       {
         episodeId: episode.id,
@@ -106,7 +102,7 @@ export default function Watch() {
     )
 
     if (result.ok) {
-      toast.success(`Downloading EP ${episode.number} (${result.source?.quality ?? quality})`)
+      toast.success(`EP ${episode.number}: ${result.source?.filename ?? 'saved to Downloads'}`)
     } else {
       setFailure({ quality, error: result.error ?? 'Download failed' })
     }

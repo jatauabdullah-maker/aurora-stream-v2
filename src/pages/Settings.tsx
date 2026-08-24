@@ -1,9 +1,11 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { useDownloads } from '../hooks/useDownloads'
 import { usePWAInstall } from '../hooks/usePWA'
+import { checkExtension } from '../services/extension'
 import { classNames } from '../utils/helpers'
-import { IconDevice, IconCheck, IconBack } from '../components/common/Icons'
+import { IconDevice, IconCheck, IconBack, IconDownload } from '../components/common/Icons'
 import toast from 'react-hot-toast'
 
 export default function Settings() {
@@ -11,6 +13,17 @@ export default function Settings() {
   const { setConcurrency } = useDownloads()
   const { canInstall, installed, promptInstall } = usePWAInstall()
   const navigate = useNavigate()
+  const [extStatus, setExtStatus] = useState<{ installed: boolean; version?: string } | null>(null)
+  const [checking, setChecking] = useState(false)
+
+  const refreshExtension = async () => {
+    setChecking(true)
+    const res = await checkExtension()
+    setExtStatus(res)
+    setChecking(false)
+    if (res.installed) toast.success(`Aurora Downloader detected (v${res.version})`)
+    else toast('Extension not detected', { icon: '🔍' })
+  }
 
   return (
     <div className="px-4 md:px-10 pt-24 max-w-2xl mx-auto">
@@ -79,6 +92,83 @@ export default function Settings() {
               ))}
             </select>
           </Row>
+
+          <div className="border-t border-line pt-4 mt-4">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold flex items-center gap-2">
+                  Aurora Downloader (PC)
+                  {extStatus?.installed && (
+                    <span className="flex items-center gap-1 text-emerald-400 text-xs font-semibold">
+                      <IconCheck width={13} height={13} /> Active
+                    </span>
+                  )}
+                </p>
+                <p className="text-xs text-muted mt-0.5">
+                  {extStatus === null
+                    ? 'One-click automatic episode downloads. Runs in your browser — no server needed.'
+                    : extStatus.installed
+                      ? `Connected (v${extStatus.version}). Downloads save straight to your Downloads folder.`
+                      : 'Not detected. Install it below — takes about 30 seconds, once.'}
+                </p>
+              </div>
+              <button
+                onClick={() => void refreshExtension()}
+                disabled={checking}
+                className="shrink-0 glass px-3 py-2 rounded-xl text-xs font-semibold hover:bg-white/15 disabled:opacity-40"
+              >
+                {checking ? 'Checking...' : extStatus === null ? 'Check' : 'Re-check'}
+              </button>
+            </div>
+
+            {extStatus !== null && !extStatus.installed && (
+              <div className="mt-4 bg-surface2 border border-line rounded-xl p-4">
+                <a
+                  href="/aurora-downloader.zip"
+                  download
+                  className="flex items-center justify-center gap-2 bg-gradient-to-r from-brand2 to-brand rounded-xl py-2.5 font-bold text-sm mb-4"
+                >
+                  <IconDownload width={15} height={15} /> Step 1 — Download the extension
+                </a>
+                <ol className="text-xs text-muted space-y-2 list-none">
+                  <li className="flex gap-2">
+                    <span className="text-brand font-bold">2.</span>
+                    <span>Unzip the file to a folder you'll keep (e.g. Documents)</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="text-brand font-bold">3.</span>
+                    <span>
+                      Open <code className="text-brand">chrome://extensions</code> in a new tab
+                    </span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="text-brand font-bold">4.</span>
+                    <span>Turn on <b className="text-white">Developer mode</b> (top-right toggle)</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="text-brand font-bold">5.</span>
+                    <span>
+                      Click <b className="text-white">Load unpacked</b> and pick the unzipped folder
+                    </span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="text-brand font-bold">6.</span>
+                    <span>Come back here and hit <b className="text-white">Re-check</b> — done forever</span>
+                  </li>
+                </ol>
+                <p className="text-[11px] text-muted mt-3 leading-relaxed">
+                  Works with Chrome, Edge and Brave on Windows/Mac/Linux. Downloads save to your normal
+                  Downloads folder and run at your own connection speed.
+                </p>
+              </div>
+            )}
+
+            <p className="text-[11px] text-muted mt-3 leading-relaxed">
+              📱 Mobile: automatic downloads need a browser that supports extensions — use
+              <b className="text-white"> Firefox on Android</b>. On iOS and Chrome Android, streaming works great but
+              downloads aren't possible.
+            </p>
+          </div>
         </Section>
       </div>
     </div>

@@ -84,6 +84,16 @@ class DownloadEngine {
     this.emit()
   }
 
+  markCompletedExternal(id: string) {
+    const it = this.items.find((x) => x.id === id)
+    if (!it) return
+    it.status = 'completed'
+    it.progress = 100
+    it.external = true
+    it.resolverProgress = undefined
+    this.emit()
+  }
+
   retryResolve(id: string) {
     const it = this.items.find((x) => x.id === id)
     if (!it || it.status !== 'error') return
