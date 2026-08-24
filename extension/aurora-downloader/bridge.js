@@ -32,3 +32,10 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 
 window.postMessage({ tag: TAG, type: 'READY' }, window.location.origin);
+
+// wake the service worker so it's ready for the first download
+try {
+  chrome.runtime.sendMessage({ type: 'PING' }, () => void chrome.runtime.lastError);
+} catch {
+  // extension context gone
+}

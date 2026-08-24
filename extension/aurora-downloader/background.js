@@ -4,6 +4,10 @@ const SOURCE_BASE = 'https://animepahe.pw';
 
 /* ─── messaging ─────────────────────────────────────────────── */
 
+// top-level listeners keep the SW wakeable for tab events
+chrome.tabs.onUpdated.addListener(() => undefined);
+chrome.tabs.onRemoved.addListener(() => undefined);
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg !== 'object') return;
 
@@ -82,36 +86,42 @@ function clickTurnstileWidget() {
   return 'nothing-found';
 }
 
-async function solveChallenge(tabId, report, maxAutoMs = 20000) {
-  const deadline = Date.now() + maxAutoMs;
-  let autoTried = false;
+async function solveChallenge(tabId, report) {
+  // Phase 1: quick synthetic attempts (works occasionally, harmless otherwise)
+  const autoDeadline = Date.now() + 15000;
+  let attempted = false;
 
-  while (Date.now() < deadline) {
+  while (Date.now() < autoDeadline) {
     const challenged = await exec(tabId, isChallenged).catch(() => false);
     if (!challenged) return true;
 
-    if (!autoTried) {
+    if (!attempted) {
       report({ stage: 'solving_protection', message: 'Solving security check...' });
       await chrome.scripting.executeScript({
         target: { tabId, allFrames: true },
         func: clickTurnstileWidget,
       }).catch(() => undefined);
-      autoTried = true;
+      attempted = true;
     }
-    await sleep(5000);
+    await sleep(4000);
   }
 
+  // Phase 2: one trusted click from the user — clearance cookie then lasts ~a year,
+  // so this is normally needed only once per browser.
   const stillChallenged = await exec(tabId, isChallenged).catch(() => false);
   if (!stillChallenged) return true;
 
-  // manual fallback: bring the tab forward and ask the user for one click
-  report({ stage: 'solving_protection', message: 'One click needed: solve the check in the opened tab' });
+  report({
+    stage: 'solving_protection',
+    message: 'One-time step: click the security checkbox in the opened tab (only needed once)',
+  });
   await chrome.tabs.update(tabId, { active: true });
-  const manualDeadline = Date.now() + 120000;
+  const manualDeadline = Date.now() + 180000;
   while (Date.now() < manualDeadline) {
     const challenged = await exec(tabId, isChallenged).catch(() => false);
     if (!challenged) {
       await chrome.tabs.update(tabId, { active: false }).catch(() => undefined);
+      report({ stage: 'solving_protection', message: 'Security check passed — continuing...' });
       return true;
     }
     await sleep(3000);
