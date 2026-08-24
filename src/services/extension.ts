@@ -59,6 +59,31 @@ export function isMobileDevice(): boolean {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
 }
 
+export interface DeviceDownload {
+  id: number
+  filename: string
+  bytes: number
+  date: string
+}
+
+export async function listDeviceDownloads(): Promise<DeviceDownload[]> {
+  try {
+    const resp = await post<{ ok: boolean; items?: DeviceDownload[] }>({ type: 'LIST_DOWNLOADS' }, 6000)
+    return resp?.ok && resp.items ? resp.items : []
+  } catch {
+    return []
+  }
+}
+
+export async function openDeviceDownload(id: number): Promise<boolean> {
+  try {
+    const resp = await post<{ ok: boolean }>({ type: 'OPEN_DOWNLOAD', id }, 6000)
+    return !!resp?.ok
+  } catch {
+    return false
+  }
+}
+
 export async function startExtensionDownload(
   payload: ExtensionPayload,
   onProgress: (p: ExtensionProgress) => void

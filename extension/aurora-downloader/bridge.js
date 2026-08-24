@@ -7,7 +7,7 @@ window.addEventListener('message', (event) => {
   const msg = event.data;
   if (!msg || msg.tag !== TAG) return;
 
-  if (msg.type === 'PING' || msg.type === 'DOWNLOAD') {
+  if (msg.type === 'PING' || msg.type === 'DOWNLOAD' || msg.type === 'LIST_DOWNLOADS' || msg.type === 'OPEN_DOWNLOAD') {
     try {
       chrome.runtime.sendMessage(msg, (resp) => {
         const err = chrome.runtime.lastError?.message;

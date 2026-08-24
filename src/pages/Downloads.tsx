@@ -1,18 +1,24 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useDownloads } from '../hooks/useDownloads'
 import { formatBytes, classNames } from '../utils/helpers'
 import { IconPause, IconPlay, IconTrash, IconDownload } from '../components/common/Icons'
+import { listDeviceDownloads, openDeviceDownload, type DeviceDownload } from '../services/extension'
 import toast from 'react-hot-toast'
 
 export default function Downloads() {
   const { items, pause, resume, remove, clearCompleted } = useDownloads()
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null)
+  const [deviceFiles, setDeviceFiles] = useState<DeviceDownload[] | null>(null)
 
   useState(() => {
     if (navigator.storage?.estimate) {
       navigator.storage.estimate().then((e) => setStorage({ usage: e.usage ?? 0, quota: e.quota ?? 0 }))
     }
   })
+
+  useEffect(() => {
+    listDeviceDownloads().then(setDeviceFiles).catch(() => setDeviceFiles(null))
+  }, [])
 
   const refreshStorage = () => {
     if (navigator.storage?.estimate) {
@@ -60,11 +66,11 @@ export default function Downloads() {
         </div>
       )}
 
-      {items.length === 0 ? (
+      {items.length === 0 && (deviceFiles === null || deviceFiles.length === 0) ? (
         <div className="glass rounded-2xl p-14 mt-8 text-center">
           <IconDownload width={40} height={40} className="mx-auto text-muted opacity-50" />
           <p className="text-muted text-sm mt-4">
-            No downloads yet. Open any anime and hit "Download All" to save episodes for offline viewing.
+            No downloads yet. Open any anime and hit "Download" to save episodes for offline viewing.
           </p>
         </div>
       ) : (
@@ -72,6 +78,36 @@ export default function Downloads() {
           {active.length > 0 && <Section title="In Progress" items={active} onPause={pause} onResume={resume} onRemove={remove} onChanged={refreshStorage} />}
           {paused.length > 0 && <Section title="Paused / Failed" items={paused} onPause={pause} onResume={resume} onRemove={remove} onChanged={refreshStorage} />}
           {completed.length > 0 && <Section title="Completed" items={completed} onPause={pause} onResume={resume} onRemove={remove} onChanged={refreshStorage} />}
+          {deviceFiles && deviceFiles.length > 0 && (
+            <section>
+              <h2 className="text-sm font-bold text-muted uppercase tracking-wider mb-3">On this device (MP4s)</h2>
+              <ul className="space-y-2">
+                {deviceFiles.map((f) => (
+                  <li key={f.id} className="glass rounded-xl p-3 flex items-center gap-3">
+                    <div className="w-12 aspect-[2/3] rounded-md bg-surface2 shrink-0 flex items-center justify-center">
+                      <IconDownload width={18} height={18} className="text-muted" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{f.filename}</p>
+                      <p className="text-[11px] text-muted mt-0.5">
+                        {formatBytes(f.bytes)} · {new Date(f.date).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        void openDeviceDownload(f.id).then((ok) => {
+                          if (!ok) toast.error('Could not open the file')
+                        })
+                      }}
+                      className="shrink-0 glass rounded-lg px-3 py-1.5 text-xs font-semibold hover:bg-white/15"
+                    >
+                      Open
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </div>
       )}
     </div>

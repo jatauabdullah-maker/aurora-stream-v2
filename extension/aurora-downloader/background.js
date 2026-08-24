@@ -28,6 +28,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
+  if (msg.type === 'LIST_DOWNLOADS') {
+    chrome.downloads.search({ filenameRegex: '\\.mp4$', orderBy: ['-startTime'], limit: 60 }, (items) => {
+      const list = (items || [])
+        .filter((i) => i.exists !== false)
+        .map((i) => ({
+          id: i.id,
+          filename: (i.filename || '').split(/[\\/]/).pop(),
+          bytes: i.fileSize,
+          date: i.startTime,
+        }));
+      sendResponse({ ok: true, items: list });
+    });
+    return true;
+  }
+
+  if (msg.type === 'OPEN_DOWNLOAD') {
+    chrome.downloads.open(msg.id);
+    sendResponse({ ok: true });
+    return;
+  }
+
   if (msg.type === 'CHUNK') {
     // relay stream chunks from the kwik tab to the Aurora tab
     if (currentJobAuroraTab) {
@@ -76,6 +97,22 @@ async function navigate(tabId, url) {
 async function exec(tabId, func, ...args) {
   const [res] = await chrome.scripting.executeScript({ target: { tabId }, func, args });
   return res?.result;
+}
+
+/* Poll from the BACKGROUND side: survives navigations that destroy the page
+   context (redirect chains), re-injecting a short check every second. */
+async function pollFor(tabId, func, timeoutMs, ...args) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const r = await exec(tabId, func, ...args);
+      if (r) return r;
+    } catch {
+      // execution context destroyed (navigation) — keep polling
+    }
+    await sleep(1000);
+  }
+  return null;
 }
 
 /* ─── cloudflare challenge ──────────────────────────────────── */
@@ -190,26 +227,14 @@ function extractQualityFn() {
 }
 
 function extractRedirectFn() {
-  return (async () => {
-    // pahe.win builds the Continue link after a short countdown — poll for it
-    for (let i = 0; i < 30; i++) {
-      const a = document.querySelector('a.redirect');
-      if (a?.href) return a.href;
-      await new Promise((r) => setTimeout(r, 500));
-    }
-    return null;
-  })();
+  // short check — the background polls with re-injection across redirect chains
+  const a = document.querySelector('a.redirect');
+  return a ? a.href : null;
 }
 
 function waitForKwikFormFn() {
-  return (async () => {
-    for (let i = 0; i < 20; i++) {
-      const form = document.querySelector('form[action*="/d/"]');
-      if (form) return true;
-      await new Promise((r) => setTimeout(r, 500));
-    }
-    return false;
-  })();
+  const form = document.querySelector('form[action*="/d/"]');
+  return form ? true : null;
 }
 
 /* Streams the MP4 from the kwik page itself (correct Referer + user IP),
@@ -361,14 +386,14 @@ async function runPipeline(payload, report) {
     await navigate(tabId, chosen.href);
     if (!(await solveChallenge(tabId, report))) throw new Error('Security check not solved');
 
-    const kwikUrl = await exec(tabId, extractRedirectFn);
+    const kwikUrl = await pollFor(tabId, extractRedirectFn, 30000);
     if (!kwikUrl || !/kwik\.cx/.test(kwikUrl)) throw new Error('Could not reach download page');
 
     await navigate(tabId, kwikUrl);
     if (!(await solveChallenge(tabId, report))) throw new Error('Security check not solved');
 
     report({ stage: 'resolving_link', message: 'Starting download...' });
-    const formReady = await exec(tabId, waitForKwikFormFn);
+    const formReady = await pollFor(tabId, waitForKwikFormFn, 20000);
     if (!formReady) throw new Error('Download form not found');
 
     currentJobAuroraTab = auroraTabId;

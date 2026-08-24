@@ -1,13 +1,3 @@
-import {
-  resolveStreamViaResolver,
-  startBatchResolve,
-  pollBatchJob,
-  cancelBatchJob,
-  toDownloadUrl,
-  resolverConfigured,
-  type ResolvedSource,
-  type BatchJobState,
-} from './api'
 import { checkExtension, startExtensionDownload } from './extension'
 import { downloadEngine } from './downloads'
 
@@ -27,55 +17,21 @@ export interface SingleDownloadTarget {
   poster: string
 }
 
-function anilistIdFrom(id: string): number | undefined {
-  const m = id.match(/(\d+)/)
-  return m ? Number(m[1]) : undefined
-}
-
 export async function startSingleDownload(
   target: SingleDownloadTarget,
   quality: string,
   onProgress?: (stage: string, message: string) => void
-): Promise<{ ok: boolean; error?: string; source?: ResolvedSource; noMethod?: boolean }> {
+): Promise<{ ok: boolean; error?: string; noMethod?: boolean }> {
   // clean up a previous failed attempt so retry starts fresh
   const existing = downloadEngine.getSnapshot().find((d) => d.id === target.episodeId)
   if (existing && existing.status === 'error') {
     await downloadEngine.remove(target.episodeId)
   }
 
-  // 1. Aurora Downloader extension (runs in the user's browser — no server needed)
+  // Downloads run through the Aurora Downloader extension — in the user's
+  // browser, with their IP, saved into Aurora for offline playback.
   const ext = await checkExtension()
-  if (ext.installed) {
-    downloadEngine.addResolving({
-      id: target.episodeId,
-      animeId: target.animeId,
-      animeTitle: target.animeTitle,
-      episodeNumber: target.episodeNumber,
-      poster: target.poster,
-      quality,
-      url: '',
-    })
-    const result = await startExtensionDownload(
-      { animeTitle: target.animeTitle, episodeNumber: target.episodeNumber, quality },
-      (p) => {
-        downloadEngine.updateResolverProgress(target.episodeId, { stage: p.stage, message: p.message })
-        onProgress?.(p.stage, p.message)
-      }
-    )
-    if (result.ok && result.blob) {
-      await downloadEngine.markCompletedWithBlob(target.episodeId, result.blob)
-      return { ok: true }
-    }
-    if (result.ok) {
-      downloadEngine.markCompletedExternal(target.episodeId)
-      return { ok: true }
-    }
-    downloadEngine.markResolveError(target.episodeId, result.error ?? 'Extension download failed')
-    return { ok: false, error: result.error }
-  }
-
-  // 2. Server-side resolver
-  if (!resolverConfigured()) {
+  if (!ext.installed) {
     return { ok: false, noMethod: true, error: 'No download source available on this device' }
   }
 
@@ -88,26 +44,23 @@ export async function startSingleDownload(
     quality,
     url: '',
   })
-
-  try {
-    const resolved = await resolveStreamViaResolver(
-      target.animeTitle,
-      anilistIdFrom(target.animeId),
-      target.episodeNumber,
-      quality,
-      (p) => {
-        downloadEngine.updateResolverProgress(target.episodeId, { stage: p.stage, message: p.message })
-        onProgress?.(p.stage, p.message)
-      }
-    )
-    const source = resolved.sources[0]
-    downloadEngine.markResolved(target.episodeId, toDownloadUrl(source), source.quality)
-    return { ok: true, source }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Resolve failed'
-    downloadEngine.markResolveError(target.episodeId, msg)
-    return { ok: false, error: msg }
+  const result = await startExtensionDownload(
+    { animeTitle: target.animeTitle, episodeNumber: target.episodeNumber, quality },
+    (p) => {
+      downloadEngine.updateResolverProgress(target.episodeId, { stage: p.stage, message: p.message })
+      onProgress?.(p.stage, p.message)
+    }
+  )
+  if (result.ok && result.blob) {
+    await downloadEngine.markCompletedWithBlob(target.episodeId, result.blob)
+    return { ok: true }
   }
+  if (result.ok) {
+    downloadEngine.markCompletedExternal(target.episodeId)
+    return { ok: true }
+  }
+  downloadEngine.markResolveError(target.episodeId, result.error ?? 'Extension download failed')
+  return { ok: false, error: result.error }
 }
 
 export interface BatchTarget {
@@ -122,64 +75,70 @@ export interface BatchHandle {
   cancel: () => Promise<void>
 }
 
+export interface BatchUpdateState {
+  status: 'running' | 'completed' | 'cancelled'
+  completedCount: number
+  failedCount: number
+}
+
+const PACE_MS = 6000
+
 export async function startBatchDownload(
   target: BatchTarget,
   episodes: number[],
   quality: string,
-  onEpisodeResolved: (epNumber: number, ok: boolean, error?: string) => void,
-  onBatchUpdate: (state: BatchJobState) => void
+  onEpisodeDone: (epNumber: number, ok: boolean, error?: string) => void,
+  onBatchUpdate: (state: BatchUpdateState) => void
 ): Promise<BatchHandle> {
-  if (!resolverConfigured()) {
-    throw new Error('Download service not configured. Set VITE_RESOLVER_API.')
+  const ext = await checkExtension()
+  if (!ext.installed) {
+    throw new Error('Install the Aurora Downloader first (Settings → Downloads)')
   }
 
-  const jobId = await startBatchResolve(target.animeTitle, anilistIdFrom(target.animeId), episodes, quality)
-  const reported = new Set<number>()
+  let cancelled = false
+  const handle: BatchHandle = {
+    jobId: `ext_${Date.now()}`,
+    cancel: async () => {
+      cancelled = true
+    },
+  }
 
-  const poll = async () => {
-    for (;;) {
-      await new Promise((r) => setTimeout(r, 4000))
-      let state: BatchJobState
-      try {
-        state = await pollBatchJob(jobId)
-      } catch {
-        continue
-      }
-      onBatchUpdate(state)
+  void (async () => {
+    let completed = 0
+    let failed = 0
 
-      for (const ep of state.episodes) {
-        if (reported.has(ep.episodeNumber)) continue
-        if (ep.status === 'completed' && ep.result?.sources?.length) {
-          reported.add(ep.episodeNumber)
-          const source = ep.result.sources[0]
-          const epId = target.episodeIdFor(ep.episodeNumber)
-          const exists = downloadEngine.getSnapshot().some((d) => d.id === epId)
-          if (!exists) {
-            downloadEngine.add({
-              id: epId,
-              animeId: target.animeId,
-              animeTitle: target.animeTitle,
-              episodeNumber: ep.episodeNumber,
-              poster: target.poster,
-              quality: source.quality,
-              url: toDownloadUrl(source),
-            })
-          }
-          onEpisodeResolved(ep.episodeNumber, true)
-        } else if (ep.status === 'failed') {
-          reported.add(ep.episodeNumber)
-          onEpisodeResolved(ep.episodeNumber, false, ep.result?.error)
-        }
-      }
+    for (const ep of episodes) {
+      if (cancelled) break
 
-      if (['completed', 'failed', 'cancelled'].includes(state.status)) break
+      const result = await startSingleDownload(
+        {
+          episodeId: target.episodeIdFor(ep),
+          animeId: target.animeId,
+          animeTitle: target.animeTitle,
+          episodeNumber: ep,
+          poster: target.poster,
+        },
+        quality
+      )
+      if (result.ok) completed++
+      else failed++
+      onEpisodeDone(ep, result.ok, result.error)
+
+      onBatchUpdate({
+        status: 'running',
+        completedCount: completed,
+        failedCount: failed,
+      })
+
+      if (!cancelled) await new Promise((r) => setTimeout(r, PACE_MS))
     }
-  }
 
-  void poll()
+    onBatchUpdate({
+      status: cancelled ? 'cancelled' : 'completed',
+      completedCount: completed,
+      failedCount: failed,
+    })
+  })()
 
-  return {
-    jobId,
-    cancel: () => cancelBatchJob(jobId),
-  }
+  return handle
 }
