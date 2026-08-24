@@ -99,13 +99,30 @@ async function exec(tabId, func, ...args) {
   return res?.result;
 }
 
+async function getTitle(tabId) {
+  try {
+    return await exec(tabId, () => document.title);
+  } catch {
+    return null; // navigation in flight — unknown
+  }
+}
+
+function isChallengeTitle(title) {
+  return !!title && /just a moment/i.test(title);
+}
+
 /* Poll from the BACKGROUND side: survives navigations that destroy the page
-   context (redirect chains), re-injecting a short check every second. */
-async function pollFor(tabId, func, timeoutMs, ...args) {
+   context, handles challenges that appear mid-poll, re-injecting every second. */
+async function pollFor(tabId, func, timeoutMs, report) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    const title = await getTitle(tabId);
+    if (isChallengeTitle(title)) {
+      await solveChallenge(tabId, report);
+      continue;
+    }
     try {
-      const r = await exec(tabId, func, ...args);
+      const r = await exec(tabId, func);
       if (r) return r;
     } catch {
       // execution context destroyed (navigation) — keep polling
@@ -116,10 +133,6 @@ async function pollFor(tabId, func, timeoutMs, ...args) {
 }
 
 /* ─── cloudflare challenge ──────────────────────────────────── */
-
-function isChallenged() {
-  return /just a moment/i.test(document.title || '');
-}
 
 function clickTurnstileWidget() {
   // runs inside the challenges.cloudflare.com iframe
@@ -137,45 +150,42 @@ function clickTurnstileWidget() {
 }
 
 async function solveChallenge(tabId, report) {
-  // Phase 1: quick synthetic attempts (works occasionally, harmless otherwise)
+  const overallDeadline = Date.now() + 180000;
   const autoDeadline = Date.now() + 15000;
-  let attempted = false;
+  let lastAutoAttempt = 0;
+  let manualPrompted = false;
 
-  while (Date.now() < autoDeadline) {
-    const challenged = await exec(tabId, isChallenged).catch(() => false);
-    if (!challenged) return true;
+  while (Date.now() < overallDeadline) {
+    const title = await getTitle(tabId);
+    if (title === null) {
+      // navigation in flight — NOT a pass, keep checking
+      await sleep(1000);
+      continue;
+    }
+    if (!isChallengeTitle(title)) return true;
 
-    if (!attempted) {
+    // challenged — synthetic clicks first, then one trusted click from the user
+    if (Date.now() - lastAutoAttempt > 8000) {
       report({ stage: 'solving_protection', message: 'Solving security check...' });
       await chrome.scripting.executeScript({
         target: { tabId, allFrames: true },
         func: clickTurnstileWidget,
       }).catch(() => undefined);
-      attempted = true;
+      lastAutoAttempt = Date.now();
     }
-    await sleep(4000);
+
+    if (!manualPrompted && Date.now() > autoDeadline) {
+      report({
+        stage: 'solving_protection',
+        message: 'One-time step: click the security checkbox in the opened tab (only needed once per site)',
+      });
+      await chrome.tabs.update(tabId, { active: true }).catch(() => undefined);
+      manualPrompted = true;
+    }
+
+    await sleep(2000);
   }
 
-  // Phase 2: one trusted click from the user — clearance cookie then lasts ~a year,
-  // so this is normally needed only once per browser.
-  const stillChallenged = await exec(tabId, isChallenged).catch(() => false);
-  if (!stillChallenged) return true;
-
-  report({
-    stage: 'solving_protection',
-    message: 'One-time step: click the security checkbox in the opened tab (only needed once)',
-  });
-  await chrome.tabs.update(tabId, { active: true });
-  const manualDeadline = Date.now() + 180000;
-  while (Date.now() < manualDeadline) {
-    const challenged = await exec(tabId, isChallenged).catch(() => false);
-    if (!challenged) {
-      await chrome.tabs.update(tabId, { active: false }).catch(() => undefined);
-      report({ stage: 'solving_protection', message: 'Security check passed — continuing...' });
-      return true;
-    }
-    await sleep(3000);
-  }
   return false;
 }
 
@@ -386,14 +396,14 @@ async function runPipeline(payload, report) {
     await navigate(tabId, chosen.href);
     if (!(await solveChallenge(tabId, report))) throw new Error('Security check not solved');
 
-    const kwikUrl = await pollFor(tabId, extractRedirectFn, 30000);
+    const kwikUrl = await pollFor(tabId, extractRedirectFn, 30000, report);
     if (!kwikUrl || !/kwik\.cx/.test(kwikUrl)) throw new Error('Could not reach download page');
 
     await navigate(tabId, kwikUrl);
     if (!(await solveChallenge(tabId, report))) throw new Error('Security check not solved');
 
     report({ stage: 'resolving_link', message: 'Starting download...' });
-    const formReady = await pollFor(tabId, waitForKwikFormFn, 20000);
+    const formReady = await pollFor(tabId, waitForKwikFormFn, 20000, report);
     if (!formReady) throw new Error('Download form not found');
 
     currentJobAuroraTab = auroraTabId;
