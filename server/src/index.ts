@@ -52,14 +52,20 @@ app.get('/api/debug/check', (_req: Request, res: Response) => {
     try {
       const out = await withPage(async (page) => {
         await page.goto('https://animepahe.pw', { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => undefined);
-        await page.waitForTimeout(4000);
-        const title = await page.title().catch(() => '');
-        const frame = page.frames().find((f) => f.url().includes('challenges.cloudflare.com'));
-        const bodyLen = frame
-          ? await frame.evaluate(() => document.body?.innerHTML?.length ?? -1).catch(() => -1)
-          : -1;
+        const samples: { t: number; title: string; frame: boolean; bodyLen: number }[] = [];
+        for (const wait of [4000, 5000, 5000, 6000]) {
+          await page.waitForTimeout(wait);
+          const title = await page.title().catch(() => '');
+          const frame = page.frames().find((f) => f.url().includes('challenges.cloudflare.com'));
+          const bodyLen = frame
+            ? await frame.evaluate(() => document.body?.innerHTML?.length ?? -1).catch(() => -1)
+            : -1;
+          samples.push({ t: samples.reduce((a, s) => a + 0, 0) + wait, title: title.slice(0, 40), frame: !!frame, bodyLen });
+          if (!/just a moment/i.test(title)) break;
+        }
+        const finalTitle = await page.title().catch(() => '');
         const hasSearch = !!(await page.$('input[name="q"]').catch(() => null));
-        return { url: page.url().slice(0, 80), title, challengeFrame: !!frame, challengeBodyLen: bodyLen, hasSearch };
+        return { url: page.url().slice(0, 80), finalTitle: finalTitle.slice(0, 50), passed: !/just a moment/i.test(finalTitle), hasSearch, samples };
       });
       res.json({ ok: true, ...out });
     } catch (e) {
