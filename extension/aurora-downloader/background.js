@@ -107,8 +107,24 @@ async function getTitle(tabId) {
   }
 }
 
-function isChallengeTitle(title) {
-  return !!title && /just a moment/i.test(title);
+/* Runs in the TOP frame: catches full-page challenges AND widgets embedded
+   inside an otherwise-normal page (pahe.win guards its Continue link this way). */
+function pageHasChallenge() {
+  if (/just a moment|attention required|verifying you are human|security verification/i.test(document.title || '')) {
+    return true;
+  }
+  const cf = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
+  if (cf) {
+    const r = cf.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) return true;
+  }
+  const bodyText = (document.body?.innerText || '').slice(0, 2000);
+  if (/performing security verification|verifying you are human/i.test(bodyText)) return true;
+  return false;
+}
+
+function isBlockedTitle(title) {
+  return !!title && /attention required/i.test(title);
 }
 
 /* Poll from the BACKGROUND side: survives navigations that destroy the page
@@ -116,8 +132,12 @@ function isChallengeTitle(title) {
 async function pollFor(tabId, func, timeoutMs, report) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const title = await getTitle(tabId);
-    if (isChallengeTitle(title)) {
+    const challenged = await exec(tabId, pageHasChallenge).catch(() => null);
+    if (challenged === null) {
+      await sleep(1000);
+      continue; // navigation in flight — retry
+    }
+    if (challenged) {
       await solveChallenge(tabId, report);
       continue;
     }
@@ -157,12 +177,18 @@ async function solveChallenge(tabId, report) {
 
   while (Date.now() < overallDeadline) {
     const title = await getTitle(tabId);
-    if (title === null) {
+    if (isBlockedTitle(title)) {
+      report({ stage: 'error', message: 'Site blocked this download (IP flagged by Cloudflare)' });
+      return false;
+    }
+
+    const challenged = await exec(tabId, pageHasChallenge).catch(() => null);
+    if (challenged === null) {
       // navigation in flight — NOT a pass, keep checking
       await sleep(1000);
       continue;
     }
-    if (!isChallengeTitle(title)) return true;
+    if (!challenged) return true;
 
     // challenged — synthetic clicks first, then one trusted click from the user
     if (Date.now() - lastAutoAttempt > 8000) {

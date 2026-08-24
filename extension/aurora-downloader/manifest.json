@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Automatic anime downloads for Aurora Stream. Runs entirely in your browser — no servers, your IP, your rules.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6kB8rHLCKPU6xsRkypTs0GX4HVMdVqYxqsZlFPi/zZce82/sfyuQKmzzG/phIrKN0NGWvrJpwpzgBDR7977UOIYDximNrVuoTODoj8lKQPyyLbyzHI8EE1i0hVKWAxVhavAPJYJ0izqN+0vxg/4yMiI4CrFE6kRx4WrIaTKEHxhK9QUNfxmAUsC58wh5ivTsNnciuIJp0s9lot544csIxtBNz1rS+2nrGELDkcJzvXHBAwLxfVbam2Rbvl1pzpmDcBlE19/qfVokT1Njonsx0PH/MedTqyho3JY4JxtmFO7J4DxnMc9Qtcg65tlMWMaPjZ/Qb2CLCe2a4PcywsXYkQIDAQAB",
-  "permissions": ["tabs", "downloads", "scripting", "storage"],
+  "permissions": ["tabs", "downloads", "downloads.open", "scripting", "storage"],
   "host_permissions": [
     "https://animepahe.pw/*",
     "https://pahe.win/*",
