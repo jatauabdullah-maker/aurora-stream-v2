@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: aurora-resolver
+    runtime: docker
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: ./server
+    plan: free
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: HEADLESS
+        value: "false"
+      - key: CACHE_TTL_MINUTES
+        value: "45"
+      - key: PACE_MIN_MS
+        value: "6000"
+      - key: PACE_MAX_MS
+        value: "12000"
+      - key: FILE_TTL_MINUTES
+        value: "120"
+      # Optional: Mistral recovery brain (comma-separated keys). Leave empty to
+      # run on pure skill-based logic — the resolver works without it.
+      - key: MISTRAL_API_KEYS
+        sync: false
+      # Optional: bootstrap cf_clearance cookies (JSON array) if Render's IP
+      # gets Turnstile-blocked. Export from your browser with a cookie editor.
+      - key: CF_COOKIES_JSON
+        sync: false

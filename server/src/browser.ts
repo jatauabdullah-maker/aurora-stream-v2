@@ -25,12 +25,23 @@ const ALLOWED_HOSTS =
 
 async function createSession(): Promise<Session> {
   mkdirSync(USER_DATA_DIR, { recursive: true });
+  mkdirSync(DOWNLOADS_DIR, { recursive: true });
 
   const context = await chromium.launchPersistentContext(USER_DATA_DIR, {
     headless: HEADLESS,
     channel: CHANNEL,
     args: ['--no-sandbox', '--disable-dev-shm-usage'],
   });
+
+  const cfCookies = process.env.CF_COOKIES_JSON;
+  if (cfCookies) {
+    try {
+      await context.addCookies(JSON.parse(cfCookies));
+      console.log('[browser] injected CF_COOKIES_JSON bootstrap cookies');
+    } catch {
+      console.error('[browser] invalid CF_COOKIES_JSON, ignoring');
+    }
+  }
 
   context.on('page', (popup) => {
     popup.close().catch(() => undefined);

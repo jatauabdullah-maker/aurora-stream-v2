@@ -1,40 +1,29 @@
 FROM node:20-bookworm-slim
 
+# Real Google Chrome + xvfb (headed Chrome on a virtual display passes Cloudflare;
+# headless browsers get detected and blocked)
 RUN apt-get update && apt-get install -y \
-  libnss3 \
-  libnspr4 \
-  libatk1.0-0 \
-  libatk-bridge2.0-0 \
-  libcups2 \
-  libdrm2 \
-  libxkbcommon0 \
-  libxcomposite1 \
-  libxdamage1 \
-  libxfixes3 \
-  libxrandr2 \
-  libgbm1 \
-  libasound2 \
-  libatspi2.0-0 \
-  libgtk-3.0 \
-  libx11-xcb1 \
+  wget gnupg xvfb ca-certificates \
+  && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
+  && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
+  && apt-get update \
+  && apt-get install -y google-chrome-stable fonts-liberation \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-ENV PLAYWRIGHT_BROWSERS_PATH=/app/.cache/ms-playwright
-
 COPY package*.json ./
-
 RUN npm ci
 
-RUN npx playwright install chromium
-
 COPY . .
-
 RUN npm run build
 
 ENV PORT=8080
+ENV HEADLESS=false
+ENV CHROME_CHANNEL=chrome
+ENV USER_DATA_DIR=/tmp/aurora-profile
+ENV DOWNLOAD_DIR=/tmp/aurora-downloads
 
 EXPOSE 8080
 
-CMD ["node", "dist/index.js"]
+CMD ["xvfb-run", "--auto-servernum", "node", "dist/index.js"]
