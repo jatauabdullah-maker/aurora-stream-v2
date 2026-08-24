@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import VideoPlayer from '../components/player/VideoPlayer'
-import { getAnime, getStream, getEpisodes, backendConfigured, resolveStreamViaResolver, resolverConfigured } from '../services/api'
+import { getAnime, getStream, getEpisodes, backendConfigured, resolverConfigured } from '../services/api'
 import { useApp } from '../context/AppContext'
 import { useProgressTracker } from '../hooks/usePlayer'
 import { formatDuration, formatBytes, classNames } from '../utils/helpers'
 import { IconBack, IconChevronLeft, IconChevronRight, IconDownload } from '../components/common/Icons'
+import { DownloadDialog, DownloadFailureDialog } from '../components/common/DownloadDialog'
 import { useDownloads } from '../hooks/useDownloads'
 import { downloadEngine } from '../services/downloads'
+import { startSingleDownload, lowerQuality } from '../services/downloadOrchestrator'
 import toast from 'react-hot-toast'
 import type { AnimeDetails, Episode, StreamResponse } from '../types'
 
@@ -21,7 +23,9 @@ export default function Watch() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const { settings } = useApp()
-  const { addDownload, items: downloads } = useDownloads()
+  const { items: downloads } = useDownloads()
+  const [dlDialogOpen, setDlDialogOpen] = useState(false)
+  const [failure, setFailure] = useState<{ quality: string; error: string } | null>(null)
 
   const episode = useMemo(() => episodes.find((e) => e.id === episodeId), [episodes, episodeId])
   const { track, getInitialPosition } = useProgressTracker(anime, episode ?? null)
@@ -81,63 +85,57 @@ export default function Watch() {
     ? { sources: [{ url: offlineUrl, quality: 'offline' }], subtitles: stream?.subtitles ?? [] }
     : stream
 
-  const downloadCurrent = async () => {
-    if (!anime || !episode || !stream) return
-    const source = stream.sources.find((s) => s.quality === settings.preferredQuality) ?? stream.sources[0]
-    if (!source) return toast.error('No source available')
-    if (source.type === 'embed') {
-      return toast('Downloads aren\'t available for this source — stream it instead.', { icon: '📡' })
+  const runDownload = async (quality: string) => {
+    if (!anime || !episode) return
+    setDlDialogOpen(false)
+    setFailure(null)
+
+    if (!resolverConfigured()) {
+      return toast('Downloads need the resolver service. Set VITE_RESOLVER_API in settings.', { icon: '⚙️' })
     }
-    
-    // If source is from resolver (mp4 type), we need to resolve it first
-    if (source.type === 'mp4' && resolverConfigured()) {
-      const parsed = episode.id.match(/^al-(\d+)-e(\d+)$/)
-      if (parsed) {
-        const episodeNumber = parseInt(parsed[2], 10)
-        
-        // Add download with resolving status
-        addDownload({
-          id: episode.id,
-          animeId: anime.id,
-          animeTitle: anime.title,
-          episodeNumber: episode.number,
-          poster: anime.poster,
-          quality: source.quality,
-          url: source.url,
-        })
-        
-        try {
-          const resolved = await resolveStreamViaResolver(
-            anime.title,
-            episodeNumber,
-            settings.preferredQuality,
-            (progress) => {
-              downloadEngine.updateResolverProgress(episode.id, progress)
-            }
-          )
-          
-          if (resolved.sources?.length) {
-            // The download engine will pick up the resolved URL and start downloading
-            toast.success('Download started')
-          }
-        } catch (err) {
-          console.error('Resolver failed:', err)
-          toast.error('Failed to resolve download source')
-        }
-        return
-      }
+
+    const result = await startSingleDownload(
+      {
+        episodeId: episode.id,
+        animeId: anime.id,
+        animeTitle: anime.title,
+        episodeNumber: episode.number,
+        poster: anime.poster,
+      },
+      quality
+    )
+
+    if (result.ok) {
+      toast.success(`Downloading EP ${episode.number} (${result.source?.quality ?? quality})`)
+    } else {
+      setFailure({ quality, error: result.error ?? 'Download failed' })
     }
-    
-    addDownload({
-      id: episode.id,
-      animeId: anime.id,
-      animeTitle: anime.title,
-      episodeNumber: episode.number,
-      poster: anime.poster,
-      quality: source.quality,
-      url: source.url,
-    })
-    toast.success('Added to downloads')
+  }
+
+  const downloadCurrent = () => {
+    if (!anime || !episode) return
+    const existing = downloads.find((d) => d.id === episode.id)
+    if (existing?.status === 'completed') {
+      return toast('Already downloaded', { icon: '✅' })
+    }
+    if (existing && ['pending', 'downloading', 'resolving'].includes(existing.status)) {
+      return toast('Already in your downloads', { icon: '⏳' })
+    }
+    setDlDialogOpen(true)
+  }
+
+  const retryFailure = () => {
+    if (!failure) return
+    const q = failure.quality
+    setFailure(null)
+    void runDownload(q)
+  }
+
+  const tryLowerQuality = () => {
+    if (!failure) return
+    const lower = lowerQuality(failure.quality)
+    setFailure(null)
+    if (lower) void runDownload(lower)
   }
 
   if (loading) {
@@ -229,7 +227,7 @@ export default function Watch() {
           )}
           <button
             onClick={downloadCurrent}
-            disabled={!stream}
+            disabled={!anime || !episode}
             className="flex items-center gap-1.5 glass px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-white/15 disabled:opacity-40"
           >
             <IconDownload width={16} height={16} />
@@ -279,6 +277,26 @@ export default function Watch() {
           </div>
         </div>
       )}
+
+      <DownloadDialog
+        open={dlDialogOpen}
+        animeTitle={anime?.title ?? ''}
+        episodeLabel={episode ? `Episode ${episode.number}` : ''}
+        poster={anime?.poster}
+        onClose={() => setDlDialogOpen(false)}
+        onStart={(q) => void runDownload(q)}
+      />
+
+      <DownloadFailureDialog
+        open={!!failure}
+        animeTitle={anime?.title ?? ''}
+        episodeLabel={episode ? `Episode ${episode.number}` : ''}
+        quality={failure?.quality ?? ''}
+        error={failure?.error ?? ''}
+        onClose={() => setFailure(null)}
+        onRetry={retryFailure}
+        onLowerQuality={failure && lowerQuality(failure.quality) ? tryLowerQuality : null}
+      />
     </div>
   )
 }

@@ -6,7 +6,6 @@ import type {
   StreamResponse,
   SearchFilters,
   PagedResult,
-  StreamSource,
 } from '../types'
 import {
   alTrending,
@@ -133,26 +132,13 @@ export function embedSourceForEpisode(episodeId: string): StreamResponse | null 
   }
 }
 
-export async function getStream(episodeId: string, options?: { animeTitle?: string; preferredQuality?: string }): Promise<StreamResponse> {
+export async function getStream(episodeId: string, _options?: { animeTitle?: string; preferredQuality?: string }): Promise<StreamResponse> {
   if (http) {
     try {
       const { data } = await http.get(`/stream/${episodeId}`)
       if (data?.sources?.length) return data
     } catch {
       // fall through to resolver/embed fallback
-    }
-  }
-  
-  const parsed = parseEpisodeId(episodeId)
-  if (parsed && resolverConfigured() && options?.animeTitle) {
-    try {
-      return await resolveStreamViaResolver(
-        options.animeTitle,
-        parsed.episode,
-        options.preferredQuality || '1080p'
-      )
-    } catch {
-      // fall through to embed fallback
     }
   }
   
@@ -182,93 +168,190 @@ export function resolverConfigured(): boolean {
   return RESOLVER_API.trim() !== ''
 }
 
+function resolverBase(): string {
+  return RESOLVER_API.replace(/\/api\/resolve-stream\/?$/, '').replace(/\/$/, '')
+}
+
 export interface ResolveRequest {
   animeTitle: string
   episodeNumber: number
   preferredQuality?: string
 }
 
+export type ResolverStage =
+  | 'queued' | 'searching' | 'found_anime' | 'finding_episode' | 'on_play_page'
+  | 'solving_protection' | 'on_redirect' | 'resolving_link' | 'complete' | 'error'
+
 export interface ResolveProgress {
-  stage: 'searching' | 'found_anime' | 'finding_episode' | 'on_play_page' |
-         'solving_turnstile_animepahe' | 'on_pahewin' | 'solving_turnstile_kwik' |
-         'submitting_download' | 'complete' | 'error'
+  stage: ResolverStage
   message: string
   animeTitle: string
   episodeNumber: number
 }
 
+export interface ResolvedSource {
+  url: string
+  quality: string
+  type: string
+  referer?: string
+  filename?: string
+  sizeMB?: number
+}
+
 export interface ResolveResponse {
   success: boolean
-  sources?: StreamSource[]
+  sources?: ResolvedSource[]
+  availableQualities?: string[]
   subtitles?: { url: string; lang: string; label: string; default?: boolean }[]
   error?: string
+  fromCache?: boolean
   progress: ResolveProgress
 }
+
+export interface BatchEpisodeStatus {
+  episodeNumber: number
+  status: 'pending' | 'resolving' | 'completed' | 'failed' | 'cancelled'
+  progress?: ResolveProgress
+  result?: {
+    episodeNumber: number
+    success: boolean
+    sources?: ResolvedSource[]
+    availableQualities?: string[]
+    error?: string
+    fromCache?: boolean
+  }
+}
+
+export interface BatchJobState {
+  jobId: string
+  status: 'pending' | 'running' | 'completed' | 'cancelled' | 'failed'
+  episodes: BatchEpisodeStatus[]
+  completedCount: number
+  failedCount: number
+  error?: string
+}
+
+const IP_LOCKED_HOSTS = /owocdn\.top|uwocdn\.top|uwucdn\.top|kwik\.cx|pahe\.win/i
+
+export function toDownloadUrl(source: ResolvedSource): string {
+  if (source.url.startsWith('/')) {
+    return `${resolverBase()}${source.url}`
+  }
+  if (resolverConfigured() && IP_LOCKED_HOSTS.test(source.url)) {
+    const base = resolverBase()
+    const params = new URLSearchParams({ url: source.url })
+    if (source.referer) params.set('referer', source.referer)
+    return `${base}/api/file?${params.toString()}`
+  }
+  return source.url
+}
+
+export function directReferer(source: ResolvedSource): string | undefined {
+  return IP_LOCKED_HOSTS.test(source.url) ? undefined : source.referer
+}
+
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${resolverBase()}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw Object.assign(new Error(data.error || `Resolver error ${res.status}`), {
+      code: 'RESOLVER_ERROR',
+      status: res.status,
+    })
+  }
+  return (await res.json()) as T
+}
+
+async function getJson<T>(path: string): Promise<T> {
+  const res = await fetch(`${resolverBase()}${path}`)
+  if (!res.ok) {
+    throw Object.assign(new Error(`Resolver error ${res.status}`), {
+      code: 'RESOLVER_POLL_ERROR',
+      status: res.status,
+    })
+  }
+  return (await res.json()) as T
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export async function resolveStreamViaResolver(
   animeTitle: string,
   episodeNumber: number,
   preferredQuality: string,
-  onProgress?: (progress: ResolveProgress) => void
-): Promise<StreamResponse> {
+  onProgress?: (progress: ResolveProgress) => void,
+  signal?: AbortSignal
+): Promise<{ sources: ResolvedSource[]; availableQualities: string[]; fromCache?: boolean }> {
   if (!resolverConfigured()) {
     throw Object.assign(new Error('NO_RESOLVER'), { code: 'NO_RESOLVER' })
   }
-  
-  // Start the resolve job
-  const startResponse = await fetch(RESOLVER_API, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ animeTitle, episodeNumber, preferredQuality }),
+
+  const { jobId } = await postJson<{ jobId: string }>('/api/resolve-stream', {
+    animeTitle,
+    episodeNumber,
+    preferredQuality,
   })
-  
-  if (!startResponse.ok) {
-    throw Object.assign(new Error('RESOLVER_ERROR'), { code: 'RESOLVER_ERROR', status: startResponse.status })
-  }
-  
-  const startData = await startResponse.json()
-  const jobId = startData.jobId
-  
-  if (!jobId) {
-    throw Object.assign(new Error('Invalid resolver response: no jobId'), { code: 'RESOLVER_NO_JOB_ID' })
-  }
-  
-  // Poll for job completion
-  const maxPolls = 120 // 10 minutes at 5s intervals
-  let polls = 0
-  
-  while (polls < maxPolls) {
-    await new Promise(resolve => setTimeout(resolve, 5000))
-    polls++
-    
-    const pollResponse = await fetch(`${RESOLVER_API}/${jobId}`)
-    if (!pollResponse.ok) {
-      throw Object.assign(new Error('RESOLVER_POLL_ERROR'), { code: 'RESOLVER_POLL_ERROR', status: pollResponse.status })
-    }
-    
-    const jobData = await pollResponse.json()
-    
-    if (jobData.progress && onProgress) {
-      onProgress(jobData.progress)
-    }
-    
-    if (jobData.status === 'completed' && jobData.result) {
-      const result = jobData.result
-      if (!result.success || !result.sources?.length) {
-        throw Object.assign(new Error(result.error || 'Resolver returned no sources'), { code: 'RESOLVER_NO_SOURCES' })
+
+  const maxPolls = 120
+  for (let i = 0; i < maxPolls; i++) {
+    if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { code: 'CANCELLED' })
+    await sleep(3000)
+
+    const job = await getJson<{
+      status: string
+      progress?: ResolveProgress
+      result?: ResolveResponse
+      error?: string
+    }>(`/api/resolve-stream/${jobId}`)
+
+    if (job.progress && onProgress) onProgress(job.progress)
+
+    if (job.status === 'completed' && job.result) {
+      if (!job.result.success || !job.result.sources?.length) {
+        throw Object.assign(new Error(job.result.error || 'No sources found'), {
+          code: 'RESOLVER_NO_SOURCES',
+          availableQualities: job.result.availableQualities,
+        })
       }
       return {
-        sources: result.sources,
-        subtitles: result.subtitles || [],
+        sources: job.result.sources,
+        availableQualities: job.result.availableQualities ?? [],
+        fromCache: job.result.fromCache,
       }
     }
-    
-    if (jobData.status === 'failed') {
-      throw Object.assign(new Error(jobData.error || 'Resolver job failed'), { code: 'RESOLVER_JOB_FAILED' })
+    if (job.status === 'failed') {
+      throw Object.assign(new Error(job.error || 'Resolver failed'), { code: 'RESOLVER_JOB_FAILED' })
     }
   }
-  
   throw Object.assign(new Error('Resolver timed out'), { code: 'RESOLVER_TIMEOUT' })
+}
+
+export async function startBatchResolve(
+  animeTitle: string,
+  episodes: number[],
+  preferredQuality: string
+): Promise<string> {
+  if (!resolverConfigured()) {
+    throw Object.assign(new Error('NO_RESOLVER'), { code: 'NO_RESOLVER' })
+  }
+  const { jobId } = await postJson<{ jobId: string }>('/api/resolve-batch', {
+    animeTitle,
+    episodes,
+    preferredQuality,
+  })
+  return jobId
+}
+
+export async function pollBatchJob(jobId: string): Promise<BatchJobState> {
+  return getJson<BatchJobState>(`/api/resolve-batch/${jobId}`)
+}
+
+export async function cancelBatchJob(jobId: string): Promise<void> {
+  await postJson(`/api/resolve-batch/${jobId}/cancel`, {})
 }
 
 export function parseEpisodeIdForResolver(episodeId: string): { anilistId: string; episode: number } | null {

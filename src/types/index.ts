@@ -99,9 +99,8 @@ export interface DownloadItem {
   error?: string
   createdAt: number
   resolverProgress?: {
-    stage: 'searching' | 'found_anime' | 'finding_episode' | 'on_play_page' | 
-           'solving_turnstile_animepahe' | 'on_pahewin' | 'solving_turnstile_kwik' | 
-           'submitting_download' | 'complete' | 'error'
+    stage: 'queued' | 'searching' | 'found_anime' | 'finding_episode' | 'on_play_page' |
+           'solving_protection' | 'on_redirect' | 'resolving_link' | 'complete' | 'error'
     message: string
   }
 }

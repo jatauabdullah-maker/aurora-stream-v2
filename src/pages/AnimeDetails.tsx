@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
-import { getAnime, getStream, getRelated } from '../services/api'
+import { getAnime, getRelated, resolverConfigured } from '../services/api'
 import { useApp } from '../context/AppContext'
 import { useDownloads } from '../hooks/useDownloads'
 import { getProgress } from '../services/storage'
 import { formatDuration, classNames } from '../utils/helpers'
 import AnimeRow from '../components/anime/AnimeRow'
+import { BatchDownloadDialog } from '../components/common/BatchDownloadDialog'
+import { startBatchDownload, startSingleDownload } from '../services/downloadOrchestrator'
 import {
   IconPlay, IconPlus, IconCheck, IconStar, IconDownload,
   IconChevronDown, IconBack, IconClock,
@@ -23,8 +25,11 @@ export default function AnimeDetails() {
   const [error, setError] = useState<string | null>(null)
   const [openSeason, setOpenSeason] = useState<number | null>(1)
   const [downloadingAll, setDownloadingAll] = useState(false)
+  const [batchOpen, setBatchOpen] = useState(false)
+  const [batchSeason, setBatchSeason] = useState<number | null>(null)
+  const [batchProgress, setBatchProgress] = useState<{ done: number; failed: number; total: number } | null>(null)
   const { isInWatchlist, toggleWatchlist, settings } = useApp()
-  const { addDownload, items: downloads } = useDownloads()
+  const { items: downloads } = useDownloads()
 
   useEffect(() => {
     if (!id) return
@@ -84,61 +89,87 @@ export default function AnimeDetails() {
   const inList = isInWatchlist(anime.id)
 
   const downloadEpisode = async (ep: Episode) => {
-    try {
-      const stream = await getStream(ep.id)
-      const source =
-        stream.sources.find((s) => s.quality === settings.preferredQuality) ?? stream.sources[0]
-      if (!source) return toast.error('No source available for this episode')
-      if (source.type === 'embed') {
-        return toast('Downloads aren\'t available for this source — stream it instead.', { icon: '📡' })
-      }
-      addDownload({
-        id: ep.id,
+    if (!resolverConfigured()) {
+      return toast('Downloads need the resolver service. Set VITE_RESOLVER_API in settings.', { icon: '⚙️' })
+    }
+    const existing = downloads.find((d) => d.id === ep.id)
+    if (existing && ['pending', 'downloading', 'resolving', 'completed'].includes(existing.status)) {
+      return toast(existing.status === 'completed' ? 'Already downloaded' : 'Already in your downloads', {
+        icon: existing.status === 'completed' ? '✅' : '⏳',
+      })
+    }
+    const result = await startSingleDownload(
+      {
+        episodeId: ep.id,
         animeId: anime.id,
         animeTitle: anime.title,
         episodeNumber: ep.number,
         poster: anime.poster,
-        quality: source.quality,
-        url: source.url,
-      })
-      toast.success(`Queued: Episode ${ep.number}`)
-    } catch {
-      toast.error(`Could not get source for Episode ${ep.number}`)
-    }
+      },
+      settings.preferredQuality || '720p'
+    )
+    if (result.ok) toast.success(`Resolving Episode ${ep.number}...`)
+    else toast.error(`Episode ${ep.number}: ${result.error}`)
   }
 
-  const downloadSeason = async (season: number) => {
+  const downloadSeason = (season: number) => {
     const eps = seasons.get(season) ?? []
     if (!eps.length) return
-    const probe = await getStream(eps[0].id).catch(() => null)
-    if (probe?.sources?.[0]?.type === 'embed') {
-      return toast('Downloads aren\'t available for this source — stream it instead.', { icon: '📡' })
+    if (!resolverConfigured()) {
+      return toast('Downloads need the resolver service. Set VITE_RESOLVER_API in settings.', { icon: '⚙️' })
     }
+    setBatchSeason(season)
+    setBatchOpen(true)
+  }
+
+  const startBatch = async (epNumbers: number[], quality: string) => {
+    setBatchOpen(false)
     setDownloadingAll(true)
-    let queued = 0
-    for (const ep of eps) {
-      if (downloads.some((d) => d.id === ep.id)) continue
-      try {
-        const stream = await getStream(ep.id)
-        const source =
-          stream.sources.find((s) => s.quality === settings.preferredQuality) ?? stream.sources[0]
-        if (!source) continue
-        addDownload({
-          id: ep.id,
+    setBatchProgress({ done: 0, failed: 0, total: epNumbers.length })
+
+    const epIdMap = new Map<number, string>()
+    for (const eps of seasons.values()) {
+      for (const ep of eps) epIdMap.set(ep.number, ep.id)
+    }
+
+    try {
+      await startBatchDownload(
+        {
           animeId: anime.id,
           animeTitle: anime.title,
-          episodeNumber: ep.number,
           poster: anime.poster,
-          quality: source.quality,
-          url: source.url,
-        })
-        queued++
-      } catch {
-        /* skip failed */
-      }
+          episodeIdFor: (n) => epIdMap.get(n) ?? `al-${anime.id.replace(/\D/g, '')}-e${n}`,
+        },
+        epNumbers,
+        quality,
+        (epNum, ok, error) => {
+          setBatchProgress((prev) => {
+            if (!prev) return prev
+            return {
+              ...prev,
+              done: prev.done + (ok ? 1 : 0),
+              failed: prev.failed + (ok ? 0 : 1),
+            }
+          })
+          if (!ok) toast.error(`EP ${epNum}: ${error ?? 'failed'}`, { duration: 3000 })
+        },
+        (state) => {
+          if (['completed', 'failed', 'cancelled'].includes(state.status)) {
+            setDownloadingAll(false)
+            toast.success(
+              `Batch finished: ${state.completedCount} resolved, ${state.failedCount} failed`,
+              { duration: 5000 }
+            )
+            setTimeout(() => setBatchProgress(null), 4000)
+          }
+        }
+      )
+      toast.success(`Batch started: ${epNumbers.length} episodes at ${quality}`)
+    } catch (err) {
+      setDownloadingAll(false)
+      setBatchProgress(null)
+      toast.error(err instanceof Error ? err.message : 'Batch failed to start')
     }
-    setDownloadingAll(false)
-    toast.success(queued > 0 ? `Queued ${queued} episodes` : 'All episodes already queued')
   }
 
   const firstUnwatched = anime.episodes.find((e) => {
@@ -324,6 +355,32 @@ export default function AnimeDetails() {
           <AnimeRow title="Related Titles" items={related} />
         </div>
       )}
+
+      {batchProgress && (
+        <div className="fixed bottom-20 md:bottom-6 right-4 z-40 glass rounded-2xl px-5 py-4 shadow-2xl min-w-[240px]">
+          <p className="text-sm font-bold flex items-center gap-2">
+            <span className="animate-spin inline-block">⟳</span> Batch resolving
+          </p>
+          <p className="text-xs text-muted mt-1">
+            {batchProgress.done} ready · {batchProgress.failed} failed · {batchProgress.total} total
+          </p>
+          <div className="h-1.5 bg-white/10 rounded-full overflow-hidden mt-2">
+            <div
+              className="h-full bg-gradient-to-r from-brand2 to-brand rounded-full transition-all"
+              style={{ width: `${Math.round(((batchProgress.done + batchProgress.failed) / Math.max(1, batchProgress.total)) * 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      <BatchDownloadDialog
+        open={batchOpen}
+        animeTitle={anime.title}
+        poster={anime.poster}
+        episodeNumbers={(batchSeason != null ? seasons.get(batchSeason) : anime.episodes)?.map((e) => e.number) ?? []}
+        onClose={() => setBatchOpen(false)}
+        onStart={(eps, q) => void startBatch(eps, q)}
+      />
     </div>
   )
 }

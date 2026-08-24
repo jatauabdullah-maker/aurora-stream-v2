@@ -1,23 +1,26 @@
 {
   "name": "aurora-resolver",
-  "version": "1.0.0",
-  "description": "AnimePahe stream resolver for Aurora Stream",
+  "version": "2.0.0",
+  "description": "Server-side anime download resolver for Aurora Stream (Playwright + modular sources + Mistral brain)",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "tsx src/test.ts",
-    "install:playwright": "npx playwright install chromium"
+    "test:resolve": "tsx src/test.ts",
+    "typecheck": "tsc --noEmit",
+    "install:browser": "patchright install chromium"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "playwright": "^1.47.0",
-    "playwright-extra": "^4.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "patchright": "^1.52.0",
+    "playwright": "^1.47.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

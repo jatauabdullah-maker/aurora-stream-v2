@@ -1,47 +1,42 @@
-import { resolveStream } from './resolver.js';
-import type { ResolveRequest, ResolveProgress } from './types.js';
+import 'dotenv/config';
+import { resolveEpisode } from './resolver.js';
+import { closeBrowser } from './browser.js';
+import type { ResolveRequest } from './types.js';
 
-async function testResolve() {
-  const args = process.argv.slice(2);
-  const animeTitle = args[0] || 'One Piece';
-  const episodeNumber = parseInt(args[1] || '1174', 10);
-  const preferredQuality = args[2] || '1080p';
-  
-  console.log(`Testing resolve for: "${animeTitle}" Episode ${episodeNumber} (${preferredQuality})`);
+const args = process.argv.slice(2);
+const animeTitle = args[0] || 'FLCL';
+const episodeNumber = parseInt(args[1] || '1', 10);
+const preferredQuality = (args[2] as ResolveRequest['preferredQuality']) || '720p';
+
+async function main() {
+  console.log(`Testing resolve: "${animeTitle}" EP${episodeNumber} (${preferredQuality})`);
   console.log('─'.repeat(60));
-  
-  const request: ResolveRequest = { animeTitle, episodeNumber, preferredQuality };
-  
-  const onProgress = (progress: ResolveProgress) => {
-    const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
-    console.log(`[${timestamp}] ${progress.stage.toUpperCase()}: ${progress.message}`);
-  };
-  
+
+  const started = Date.now();
   try {
-    const result = await resolveStream(request, onProgress);
-    
+    const result = await resolveEpisode(
+      { animeTitle, episodeNumber, preferredQuality },
+      (p) => console.log(`[${p.stage}] ${p.message}`)
+    );
+
     console.log('─'.repeat(60));
     if (result.success && result.sources?.length) {
-      console.log('✅ SUCCESS!');
-      console.log(`   URL: ${result.sources[0].url}`);
-      console.log(`   Quality: ${result.sources[0].quality}`);
-      console.log(`   Type: ${result.sources[0].type}`);
-      console.log(`   Referer: ${result.sources[0].referer}`);
-      console.log(`   Filename hint: ${result.sources[0].url.split('/').pop()}`);
+      const s = result.sources[0];
+      console.log(`SUCCESS in ${Math.round((Date.now() - started) / 1000)}s`);
+      console.log(`  URL:      ${s.url}`);
+      console.log(`  Filename: ${s.filename}`);
+      console.log(`  Quality:  ${s.quality}${s.sizeMB ? ` (${s.sizeMB}MB)` : ''}`);
+      console.log(`  Serve at: <RESOLVER_BASE>${s.url}`);
     } else {
-      console.log('❌ FAILED!');
-      console.log(`   Error: ${result.error}`);
+      console.log(`FAILED: ${result.error}`);
+      if (result.availableQualities?.length) {
+        console.log(`  Available qualities: ${result.availableQualities.join(', ')}`);
+      }
     }
-    
-    if (result.progress) {
-      console.log(`   Final stage: ${result.progress.stage} - ${result.progress.message}`);
-    }
-    
-  } catch (error) {
-    console.error('❌ Test crashed:', error);
+  } finally {
+    await closeBrowser();
   }
-  
   process.exit(0);
 }
 
-testResolve();
+void main();

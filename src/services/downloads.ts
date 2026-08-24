@@ -57,6 +57,41 @@ class DownloadEngine {
     this.pump()
   }
 
+  addResolving(item: Omit<DownloadItem, 'status' | 'progress' | 'createdAt'>) {
+    if (this.items.some((x) => x.id === item.id)) return
+    const newItem = { ...item, status: 'resolving' as const, progress: 0, createdAt: Date.now() }
+    this.items.unshift(newItem)
+    this.emit()
+  }
+
+  markResolved(id: string, url: string, quality: string) {
+    const it = this.items.find((x) => x.id === id)
+    if (!it) return
+    it.url = url
+    it.quality = quality
+    it.status = 'pending'
+    it.resolverProgress = undefined
+    this.emit()
+    this.pump()
+  }
+
+  markResolveError(id: string, error: string) {
+    const it = this.items.find((x) => x.id === id)
+    if (!it) return
+    it.status = 'error'
+    it.error = error
+    it.resolverProgress = undefined
+    this.emit()
+  }
+
+  retryResolve(id: string) {
+    const it = this.items.find((x) => x.id === id)
+    if (!it || it.status !== 'error') return
+    it.status = 'resolving'
+    it.error = undefined
+    this.emit()
+  }
+
   updateResolverProgress(id: string, progress: DownloadItem['resolverProgress']) {
     const it = this.items.find((x) => x.id === id)
     if (it) {
