@@ -27,12 +27,13 @@ export default function AnimeRow({ title, items }: { title: string; items: Anime
           </button>
         </div>
       </div>
-      <div ref={scroller} className="flex gap-4 overflow-x-auto no-scrollbar px-4 md:px-10 snap-x">
+      <div ref={scroller} className="flex gap-4 overflow-x-auto no-scrollbar px-4 md:px-10 scroll-px-4 md:scroll-px-10 snap-x">
         {items.map((a) => (
           <div key={a.id} className="snap-start shrink-0 w-36 sm:w-44">
             <AnimeCard anime={a} />
           </div>
         ))}
+        <div className="shrink-0 w-1 md:w-2" aria-hidden />
       </div>
     </section>
   )

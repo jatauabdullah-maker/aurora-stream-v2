@@ -1,12 +1,16 @@
-/* Aurora Downloader — background orchestrator (MV3 service worker) */
+/* Aurora Downloader — background orchestrator (MV3)
+   Pipeline ported from kaze-downloader: parked per-host tabs in a minimized
+   window, first-party XHR sniping, clearance handoff, kwik CDN capture via
+   webRequest, DNR Referer rule, streamed into Aurora for offline playback. */
 
-const SOURCE_BASE = 'https://animepahe.pw';
+const TAG = 'aurora';
+const BASE = 'https://animepahe.pw';
+const REFERRER_RULE_ID = 424242;
 
 /* ─── messaging ─────────────────────────────────────────────── */
 
-// top-level listeners keep the SW wakeable for tab events
-chrome.tabs.onUpdated.addListener(() => undefined);
-chrome.tabs.onRemoved.addListener(() => undefined);
+let jobRunning = false;
+let auroraTabId = null;
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg !== 'object') return;
@@ -21,11 +25,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: 'A download is already running' });
       return;
     }
+    auroraTabId = sender.tab?.id ?? null;
     sendResponse({ ok: true });
-    runJob(msg.payload || {}, sender.tab?.id).catch((err) => {
-      reportTo(sender.tab?.id, { type: 'PROGRESS', progress: { stage: 'error', message: String(err).slice(0, 200) } });
+    runJob(msg.payload || {}).catch((err) => {
+      report({ type: 'PROGRESS', progress: { stage: 'error', message: String(err).slice(0, 220) } });
     });
     return;
+  }
+
+  if (msg.type === 'CHUNK') {
+    if (auroraTabId) {
+      chrome.tabs.sendMessage(auroraTabId, { type: 'CHUNK', data: msg.data, received: msg.received, total: msg.total, done: msg.done })
+        .then(() => sendResponse({ ok: true }))
+        .catch(() => sendResponse({ cancel: true }));
+    } else {
+      sendResponse({ cancel: true });
+    }
+    return true;
   }
 
   if (msg.type === 'LIST_DOWNLOADS') {
@@ -48,425 +64,794 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true });
     return;
   }
-
-  if (msg.type === 'CHUNK') {
-    // relay stream chunks from the kwik tab to the Aurora tab
-    if (currentJobAuroraTab) {
-      chrome.tabs.sendMessage(currentJobAuroraTab, { type: 'CHUNK', data: msg.data, received: msg.received, total: msg.total, done: msg.done })
-        .then((r) => sendResponse(r))
-        .catch(() => sendResponse({ cancel: true }));
-    } else {
-      sendResponse({ cancel: true });
-    }
-    return true;
-  }
 });
 
-let jobRunning = false;
-let currentJobAuroraTab = null;
-
-function reportTo(auroraTabId, msg) {
+function report(progress) {
   if (!auroraTabId) return;
-  chrome.tabs.sendMessage(auroraTabId, msg).catch(() => undefined);
+  chrome.tabs.sendMessage(auroraTabId, { type: 'PROGRESS', progress }).catch(() => undefined);
 }
 
-/* ─── tab helpers ───────────────────────────────────────────── */
-
-function waitTabComplete(tabId, timeoutMs = 30000) {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(listener);
-      resolve(false);
-    }, timeoutMs);
-    const listener = (id, info) => {
-      if (id === tabId && info.status === 'complete') {
-        clearTimeout(timer);
-        chrome.tabs.onUpdated.removeListener(listener);
-        setTimeout(resolve, 800);
-      }
-    };
-    chrome.tabs.onUpdated.addListener(listener);
-  });
-}
-
-async function navigate(tabId, url) {
-  await chrome.tabs.update(tabId, { url });
-  await waitTabComplete(tabId);
-}
-
-async function exec(tabId, func, ...args) {
-  const [res] = await chrome.scripting.executeScript({ target: { tabId }, func, args });
-  return res?.result;
-}
-
-async function getTitle(tabId) {
-  try {
-    return await exec(tabId, () => document.title);
-  } catch {
-    return null; // navigation in flight — unknown
-  }
-}
-
-/* Runs in the TOP frame: catches full-page challenges AND widgets embedded
-   inside an otherwise-normal page (pahe.win guards its Continue link this way). */
-function pageHasChallenge() {
-  if (/just a moment|attention required|verifying you are human|security verification/i.test(document.title || '')) {
-    return true;
-  }
-  const cf = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
-  if (cf) {
-    const r = cf.getBoundingClientRect();
-    if (r.width > 0 && r.height > 0) return true;
-  }
-  const bodyText = (document.body?.innerText || '').slice(0, 2000);
-  if (/performing security verification|verifying you are human/i.test(bodyText)) return true;
-  return false;
-}
-
-function isBlockedTitle(title) {
-  return !!title && /attention required/i.test(title);
-}
-
-/* Poll from the BACKGROUND side: survives navigations that destroy the page
-   context, handles challenges that appear mid-poll, re-injecting every second. */
-async function pollFor(tabId, func, timeoutMs, report) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const challenged = await exec(tabId, pageHasChallenge).catch(() => null);
-    if (challenged === null) {
-      await sleep(1000);
-      continue; // navigation in flight — retry
-    }
-    if (challenged) {
-      await solveChallenge(tabId, report);
-      continue;
-    }
-    try {
-      const r = await exec(tabId, func);
-      if (r) return r;
-    } catch {
-      // execution context destroyed (navigation) — keep polling
-    }
-    await sleep(1000);
-  }
-  return null;
-}
-
-/* ─── cloudflare challenge ──────────────────────────────────── */
-
-function clickTurnstileWidget() {
-  // runs inside the challenges.cloudflare.com iframe
-  const input = document.querySelector('input[type="checkbox"]');
-  if (input) {
-    input.click();
-    return 'clicked-input';
-  }
-  const box = document.querySelector('[role="checkbox"], .ctp-checkbox-label, #challenge-stage label');
-  if (box) {
-    box.click();
-    return 'clicked-box';
-  }
-  return 'nothing-found';
-}
-
-async function solveChallenge(tabId, report) {
-  const overallDeadline = Date.now() + 180000;
-  const autoDeadline = Date.now() + 15000;
-  let lastAutoAttempt = 0;
-  let manualPrompted = false;
-
-  while (Date.now() < overallDeadline) {
-    const title = await getTitle(tabId);
-    if (isBlockedTitle(title)) {
-      report({ stage: 'error', message: 'Site blocked this download (IP flagged by Cloudflare)' });
-      return false;
-    }
-
-    const challenged = await exec(tabId, pageHasChallenge).catch(() => null);
-    if (challenged === null) {
-      // navigation in flight — NOT a pass, keep checking
-      await sleep(1000);
-      continue;
-    }
-    if (!challenged) return true;
-
-    // challenged — synthetic clicks first, then one trusted click from the user
-    if (Date.now() - lastAutoAttempt > 8000) {
-      report({ stage: 'solving_protection', message: 'Solving security check...' });
-      await chrome.scripting.executeScript({
-        target: { tabId, allFrames: true },
-        func: clickTurnstileWidget,
-      }).catch(() => undefined);
-      lastAutoAttempt = Date.now();
-    }
-
-    if (!manualPrompted && Date.now() > autoDeadline) {
-      report({
-        stage: 'solving_protection',
-        message: 'One-time step: click the security checkbox in the opened tab (only needed once per site)',
-      });
-      await chrome.tabs.update(tabId, { active: true }).catch(() => undefined);
-      manualPrompted = true;
-    }
-
-    await sleep(2000);
-  }
-
-  return false;
-}
+/* ─── shared utils ──────────────────────────────────────────── */
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/* ─── pipeline page functions (injected) ────────────────────── */
+function safeName(s) {
+  return String(s).replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 140);
+}
 
-function searchAnimeFn(title) {
-  return (async () => {
+function padNum(n) {
+  const s = String(n);
+  return s.length < 2 ? '0' + s : s;
+}
+
+/* ─── parked work tabs (first-party cookie context) ─────────── */
+
+let workWinId = null;
+const workTabs = new Map();
+const creating = new Map();
+
+async function getWorkWindow() {
+  if (workWinId !== null) {
     try {
-      const res = await fetch(`/api?m=search&q=${encodeURIComponent(title)}`, {
-        headers: { Accept: 'application/json' },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const hit = data?.data?.[0];
-        if (hit?.session) return { uuid: hit.session, name: hit.name };
-      }
+      await chrome.windows.get(workWinId);
+      return workWinId;
     } catch {
-      // fall through to DOM autocomplete
+      workWinId = null;
     }
-    return null;
-  })();
-}
-
-function findEpisodeFn(epNum) {
-  const links = [...document.querySelectorAll('a.play[href*="/play/"]')];
-  for (const a of links) {
-    const m = (a.textContent || '').match(/(\d+(?:\.\d+)?)/);
-    if (m && parseFloat(m[1]) === epNum) return { href: a.href };
   }
-  const nums = links
-    .map((a) => {
-      const m = (a.textContent || '').match(/(\d+(?:\.\d+)?)/);
-      return m ? parseFloat(m[1]) : NaN;
-    })
-    .filter((n) => !Number.isNaN(n));
-  const next = document.querySelector('nav[aria-label="Page navigation"] a[rel="next"], nav[aria-label="Page navigation"] a:last-child');
-  return { notFound: true, minOnPage: nums.length ? Math.min(...nums) : null, nextHref: next?.href ?? null };
+  const win = await chrome.windows.create({ url: 'about:blank', focused: false, state: 'minimized' });
+  workWinId = win.id;
+  return win.id;
 }
 
-function extractQualityFn() {
-  return [...document.querySelectorAll('a[href*="pahe.win"]')].map((a) => ({
-    text: a.textContent || '',
-    href: a.href,
-  }));
+async function createWorkTab(url) {
+  const winId = await getWorkWindow();
+  return chrome.tabs.create({ url, windowId: winId, active: false });
 }
 
-function extractRedirectFn() {
-  // short check — the background polls with re-injection across redirect chains
-  const a = document.querySelector('a.redirect');
-  return a ? a.href : null;
-}
-
-function waitForKwikFormFn() {
-  const form = document.querySelector('form[action*="/d/"]');
-  return form ? true : null;
-}
-
-/* Streams the MP4 from the kwik page itself (correct Referer + user IP),
-   chunked through the background to the Aurora tab. */
-function streamDownloadFn() {
-  return (async () => {
-    const form = document.querySelector('form[action*="/d/"]');
-    if (!form) return { error: 'Download form not found' };
-
-    const res = await fetch(form.action, {
-      method: 'POST',
-      body: new FormData(form),
-      signal: AbortSignal.timeout(30 * 60 * 1000),
-    });
-    if (!res.ok || !res.body) return { error: 'HTTP ' + res.status };
-
-    const disposition = res.headers.get('content-disposition') || '';
-    const filenameMatch = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
-    const filename = filenameMatch ? filenameMatch[1] : null;
-
-    const total = Number(res.headers.get('content-length')) || 0;
-    const reader = res.body.getReader();
-    let received = 0;
-    let pending = [];
-    let pendingBytes = 0;
-    const CHUNK_TARGET = 2 * 1024 * 1024;
-
-    const toB64 = (bytes) => {
-      let binary = '';
-      const arr = new Uint8Array(bytes);
-      const step = 0x8000;
-      for (let i = 0; i < arr.length; i += step) {
-        binary += String.fromCharCode.apply(null, arr.subarray(i, i + step));
-      }
-      return btoa(binary);
+function waitTabComplete(tabId, timeoutMs = 45000) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (v) => {
+      if (settled) return;
+      settled = true;
+      chrome.tabs.onUpdated.removeListener(listener);
+      clearTimeout(timer);
+      setTimeout(() => resolve(v), 500);
     };
-
-    const sendChunk = async (b64, done) => {
-      const resp = await chrome.runtime.sendMessage({
-        type: 'CHUNK',
-        data: b64,
-        received,
-        total,
-        done,
-      });
-      if (resp?.cancel) throw new Error('Cancelled by user');
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    const listener = (id, info) => {
+      if (id === tabId && info.status === 'complete') finish(true);
     };
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.get(tabId).then((t) => { if (t.status === 'complete') finish(true); }).catch(() => finish(false));
+  });
+}
 
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      received += value.byteLength;
-      pending.push(value);
-      pendingBytes += value.byteLength;
-      if (pendingBytes >= CHUNK_TARGET) {
-        const merged = new Uint8Array(pendingBytes);
-        let off = 0;
-        for (const p of pending) {
-          merged.set(p, off);
-          off += p.byteLength;
-        }
-        pending = [];
-        pendingBytes = 0;
-        await sendChunk(toB64(merged), false);
-      }
+async function getWorkTab(hostname) {
+  if (creating.has(hostname)) return creating.get(hostname);
+  const p = (async () => {
+    let tabId = workTabs.get(hostname);
+    if (tabId !== undefined) {
+      try {
+        const t = await chrome.tabs.get(tabId);
+        if (t.url && new URL(t.url).hostname === hostname) return tabId;
+      } catch {}
+      workTabs.delete(hostname);
     }
-    if (pending.length) {
+    const url = hostname === 'pahe.win' ? 'https://pahe.win/' : `https://${hostname}/`;
+    const tab = await createWorkTab(url);
+    workTabs.set(hostname, tab.id);
+    await waitTabComplete(tab.id);
+    return tab.id;
+  })();
+  creating.set(hostname, p);
+  try {
+    return await p;
+  } finally {
+    creating.delete(hostname);
+  }
+}
+
+async function closeWorkTabs() {
+  for (const [, tabId] of workTabs) {
+    await chrome.tabs.remove(tabId).catch(() => undefined);
+  }
+  workTabs.clear();
+  if (workWinId !== null) {
+    await chrome.windows.remove(workWinId).catch(() => undefined);
+    workWinId = null;
+  }
+}
+
+function tabFetch(tabId, url, opts = {}) {
+  return chrome.scripting.executeScript({
+    target: { tabId },
+    func: async (u, o) => {
+      try {
+        const r = await fetch(u, { credentials: 'include', ...o });
+        const text = await r.text();
+        const ra = r.headers.get('retry-after');
+        return { status: r.status, text, retryAfter: ra ? Number(ra) : null };
+      } catch (e) {
+        return { status: 0, error: String((e && e.message) || e) };
+      }
+    },
+    args: [url, opts],
+  }).then(([r]) => r?.result || { status: 0, error: 'no result' }).catch((e) => ({ status: 0, error: String(e) }));
+}
+
+function injectBanner(tabId, text) {
+  chrome.scripting.executeScript({
+    target: { tabId },
+    func: (t) => {
+      const old = document.getElementById('aurora-banner');
+      if (old) {
+        old.textContent = t;
+        return;
+      }
+      const b = document.createElement('div');
+      b.id = 'aurora-banner';
+      b.textContent = t;
+      b.style.cssText =
+        'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:linear-gradient(100deg,#7c5cff,#38bdf8);color:#fff;font:600 14px system-ui,sans-serif;padding:11px 16px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.45);';
+      document.documentElement.appendChild(b);
+    },
+    args: [text],
+  }).catch(() => undefined);
+}
+
+async function focusTab(tabId, active) {
+  try {
+    await chrome.tabs.update(tabId, { active });
+    if (active) {
+      const tab = await chrome.tabs.get(tabId);
+      await chrome.windows.update(tab.windowId, { focused: true, state: 'normal' });
+    }
+  } catch {}
+}
+
+async function focusAuroraBack() {
+  if (auroraTabId) {
+    await focusTab(auroraTabId, true).catch(() => undefined);
+  }
+  await minimizeWorkWindow().catch(() => undefined);
+}
+
+async function minimizeWorkWindow() {
+  if (workWinId === null) return;
+  try {
+    await chrome.windows.update(workWinId, { state: 'minimized', focused: false });
+  } catch {}
+}
+
+/* ─── low-level fetch with clearance handoff ────────────────── */
+
+function looksLikeChallenge(status, text) {
+  if (status === 403 || status === 503) return true;
+  if (typeof text === 'string' && text.length < 100000 && /just a moment/i.test(text)) return true;
+  return false;
+}
+
+let solving = false;
+
+async function rawFetch(url, opts = {}) {
+  const maxAttempts = 4;
+  const hostname = new URL(url).hostname;
+  let lastRes = null;
+  for (let i = 0; i < maxAttempts; i++) {
+    if (jobCancelled) throw new Error('Cancelled');
+    const tabId = await getWorkTab(hostname);
+    const res = await tabFetch(tabId, url, opts);
+    if (res.status === 0) {
+      await sleep(1200);
+      continue;
+    }
+    lastRes = res;
+    if (res.status === 429) {
+      const wait = res.retryAfter && res.retryAfter > 0 ? Math.min(res.retryAfter, 60) * 1000 : Math.min(4000 * (i + 1) * (i + 1), 30000);
+      stage(`Rate limited — waiting ${Math.round(wait / 1000)}s`);
+      await sleep(wait);
+      continue;
+    }
+    if (!looksLikeChallenge(res.status, res.text)) return res;
+    if (opts.noSolve || solving) return res;
+    stage(`Security check on ${hostname} — handing you the tab`);
+    solving = true;
+    let solved = false;
+    try {
+      solved = await humanSolve(url, tabId);
+    } finally {
+      solving = false;
+    }
+    if (!solved) return res;
+  }
+  if (lastRes) return lastRes;
+  throw new Error(`Could not reach ${hostname}`);
+}
+
+async function fetchText(url, opts = {}) {
+  const res = await rawFetch(url, opts);
+  if (looksLikeChallenge(res.status, res.text)) {
+    throw new Error(`${new URL(url).hostname} is showing a security check that could not be passed`);
+  }
+  if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status} from ${new URL(url).hostname}`);
+  return res.text;
+}
+
+async function fetchJson(url, opts = {}) {
+  return JSON.parse(await fetchText(url, { ...opts, headers: { ...(opts.headers || {}), Accept: 'application/json' } }));
+}
+
+/* ─── cloudflare / turnstile handoff ────────────────────────── */
+
+function clickTurnstileInFrame() {
+  const input = document.querySelector('input[type="checkbox"]');
+  if (input) {
+    input.click();
+    return 'input';
+  }
+  const box = document.querySelector('[role="checkbox"], .ctp-checkbox-label, #challenge-stage label');
+  if (box) {
+    box.click();
+    return 'box';
+  }
+  return null;
+}
+
+async function humanSolve(url, tabId) {
+  const u = new URL(url);
+  await chrome.tabs.update(tabId, { url: u.origin + '/', active: true }).catch(() => undefined);
+  await focusTab(tabId, true);
+  injectBanner(tabId, 'Aurora needs ONE click: solve the security checkbox — it continues automatically');
+
+  setTimeout(() => {
+    chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: clickTurnstileInFrame,
+    }).catch(() => undefined);
+  }, 4000);
+
+  const deadline = Date.now() + 300000;
+  while (Date.now() < deadline) {
+    await sleep(2500);
+    if (jobCancelled) return false;
+    const probe = await tabFetch(tabId, url, { cache: 'no-store' });
+    if (probe.status === 200 && !looksLikeChallenge(200, probe.text)) {
+      await focusAuroraBack();
+      stage('Security check passed — continuing');
+      return true;
+    }
+  }
+  return false;
+}
+
+/* ─── animepahe API (via parked tab, first-party) ───────────── */
+
+async function searchAnime(q) {
+  const j = await fetchJson(`${BASE}/api?m=search&q=${encodeURIComponent(q)}`);
+  return Array.isArray(j.data) ? j.data : [];
+}
+
+async function getEpisodes(session) {
+  const eps = [];
+  for (let p = 1; p <= 80; p++) {
+    const j = await fetchJson(`${BASE}/api?m=release&id=${encodeURIComponent(session)}&sort=episode_asc&page=${p}`);
+    for (const d of j.data || []) {
+      eps.push({
+        num: Number(d.episode),
+        session: d.session,
+        audio: d.audio || '',
+      });
+    }
+    if (!j.next_page_url) break;
+  }
+  eps.sort((a, b) => a.num - b.num);
+  return eps;
+}
+
+/* ── play page parsing ──────────────────────────────────────── */
+
+function parsePlayLinks(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const out = [];
+  for (const a of doc.querySelectorAll('a[href*="pahe.win"]')) {
+    const text = (a.textContent || '').replace(/\s+/g, ' ').trim();
+    const qm = text.match(/(\d{3,4})p/i);
+    const sm = text.match(/\((\d+(?:\.\d+)?)\s*(MB|GB)\)/i);
+    out.push({
+      href: a.href,
+      group: text.split('·')[0].trim(),
+      quality: qm ? qm[1] + 'p' : null,
+      sizeMB: sm ? parseFloat(sm[1]) * (sm[2].toUpperCase() === 'GB' ? 1024 : 1) : null,
+      dub: /\beng\b/i.test(text),
+      text,
+    });
+  }
+  return out.filter((l) => l.quality);
+}
+
+function pickLink(links, quality) {
+  return (
+    links.find((l) => !l.dub && l.quality === quality) ||
+    links.find((l) => l.quality === quality) ||
+    links.find((l) => !l.dub && l.quality === '720p') ||
+    links[links.length - 1] ||
+    null
+  );
+}
+
+/* ── pahe.win resolution (parked tab + XHR snipe, handoff fallback) ── */
+
+async function tabExists(tabId) {
+  try {
+    await chrome.tabs.get(tabId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function probePaheDom(tabId) {
+  return chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => ({
+      host: location.hostname,
+      challenged: /just a moment/i.test(document.title || ''),
+      kwikHref: (() => {
+        const a = document.querySelector('a.redirect[href]');
+        return a && /kwik\./.test(a.href || '') ? a.href : null;
+      })(),
+    }),
+  }).then(([r]) => r?.result ?? null).catch(async () => {
+    if (await tabExists(tabId)) return { navigating: true };
+    return { gone: true };
+  });
+}
+
+async function resolveKwik(paheUrl) {
+  const u = new URL(paheUrl);
+  const host = u.hostname;
+  let tabId = workTabs.get(host);
+  if (tabId !== undefined) {
+    try {
+      await chrome.tabs.get(tabId);
+    } catch {
+      tabId = undefined;
+      workTabs.delete(host);
+    }
+  }
+  if (tabId === undefined) {
+    const tab = await createWorkTab(`https://${host}/`);
+    tabId = tab.id;
+    workTabs.set(host, tabId);
+    injectBanner(tabId, 'Aurora is controlling this tab — no action needed');
+    await waitTabComplete(tabId);
+  }
+
+  const extractViaXhr = async () => {
+    const html = await tabFetch(tabId, paheUrl, { cache: 'no-store' });
+    if (html.status === 429) {
+      await sleep(4000);
+      return null;
+    }
+    if (html.status === 0) return null;
+    const m = html.text && html.text.match(/https?:\/\/kwik\.cx\/[ef]\/([A-Za-z0-9]+)/);
+    return m ? `https://kwik.cx/f/${m[1]}` : null;
+  };
+
+  const quick = await extractViaXhr();
+  if (quick) return quick;
+
+  stage('Security check on pahe.win — handing you the tab');
+  await chrome.tabs.update(tabId, { url: paheUrl }).catch(() => undefined);
+  await waitTabComplete(tabId);
+  injectBanner(tabId, 'Aurora needs ONE click: solve the checkbox — then do NOT click anything else');
+  await focusTab(tabId, true);
+
+  let handedOff = true;
+  let recreations = 0;
+  for (let i = 0; i < 150; i++) {
+    if (jobCancelled) throw new Error('Cancelled');
+    const probe = await probePaheDom(tabId);
+    if (probe?.navigating) {
+      await waitTabComplete(tabId);
+      continue;
+    }
+    if (probe?.gone) {
+      recreations++;
+      if (recreations > 3) throw new Error('The pahe.win tab keeps getting closed');
+      const tab = await createWorkTab(paheUrl);
+      tabId = tab.id;
+      workTabs.set(host, tabId);
+      handedOff = true;
+      await waitTabComplete(tabId);
+      continue;
+    }
+    if (probe?.challenged) {
+      await sleep(2000);
+      continue;
+    }
+    if (probe?.host && probe.host !== host) {
+      await waitTabComplete(tabId);
+      const recheck = await probePaheDom(tabId);
+      if (recheck?.host && recheck.host !== host && !recheck.challenged) {
+        await chrome.tabs.update(tabId, { url: paheUrl }).catch(() => undefined);
+        injectBanner(tabId, 'Aurora is controlling this tab — no action needed');
+        await waitTabComplete(tabId);
+      }
+      continue;
+    }
+    if (handedOff) {
+      handedOff = false;
+      stage('Security check passed — continuing');
+      injectBanner(tabId, 'Solved — Aurora is continuing automatically');
+      await focusAuroraBack();
+    }
+    const kwik = await extractViaXhr();
+    if (kwik) {
+      await chrome.tabs.update(tabId, { url: `https://${host}/` }).catch(() => undefined);
+      return kwik;
+    }
+    if (probe?.kwikHref) {
+      await chrome.tabs.update(tabId, { url: `https://${host}/` }).catch(() => undefined);
+      return probe.kwikHref;
+    }
+    await sleep(800);
+  }
+  throw new Error('Could not find the download link on the redirect page');
+}
+
+/* ── kwik work tab ──────────────────────────────────────────── */
+
+function probeKwikDom(tabId) {
+  return chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => ({
+      host: location.hostname,
+      challenged: /just a moment/i.test(document.title || ''),
+      action: (() => {
+        const f = document.querySelector('form[action*="/d/"]');
+        return f ? f.action : null;
+      })(),
+      token: (() => {
+        const i = document.querySelector('form[action*="/d/"] input[name="_token"]');
+        return i ? i.value : null;
+      })(),
+      title: document.title,
+    }),
+  }).then(([r]) => r?.result ?? null).catch(async () => {
+    if (await tabExists(tabId)) return { navigating: true };
+    return { gone: true };
+  });
+}
+
+let kwikTabId = null;
+
+async function extractKwikForm(kwikUrl) {
+  if (kwikTabId !== null) {
+    try {
+      await chrome.tabs.get(kwikTabId);
+      await chrome.tabs.update(kwikTabId, { url: kwikUrl }).catch(() => undefined);
+    } catch {
+      const tab = await createWorkTab(kwikUrl);
+      kwikTabId = tab.id;
+    }
+  } else {
+    const tab = await createWorkTab(kwikUrl);
+    kwikTabId = tab.id;
+  }
+  const tabId = kwikTabId;
+  injectBanner(tabId, 'Aurora is controlling this tab — no action needed');
+
+  await waitTabComplete(tabId);
+  let handedOff = false;
+  for (let i = 0; i < 90; i++) {
+    if (jobCancelled) throw new Error('Cancelled');
+    const probe = await probeKwikDom(tabId);
+    if (probe?.navigating) {
+      await waitTabComplete(tabId);
+      continue;
+    }
+    if (probe?.gone) {
+      throw new Error('Download tab was closed — it will reopen for the next episode');
+    }
+    if (probe?.host && probe.host !== 'kwik.cx') {
+      await waitTabComplete(tabId);
+      const recheck = await probeKwikDom(tabId);
+      if (recheck?.host && recheck.host !== 'kwik.cx' && !recheck.challenged) {
+        await chrome.tabs.update(tabId, { url: kwikUrl }).catch(() => undefined);
+        injectBanner(tabId, 'Aurora is controlling this tab — no action needed');
+        await waitTabComplete(tabId);
+      }
+      continue;
+    }
+    if (probe?.challenged) {
+      if (!handedOff) {
+        stage('Security check on kwik — handing you the tab');
+        await focusTab(tabId, true);
+        injectBanner(tabId, 'Aurora needs ONE click: solve the checkbox — then do NOT click anything else, it continues automatically');
+        handedOff = true;
+      }
+      await sleep(2500);
+      continue;
+    }
+    if (handedOff) {
+      handedOff = false;
+      stage('Security check passed — continuing');
+      injectBanner(tabId, 'Solved — Aurora is continuing automatically');
+      await focusAuroraBack();
+    }
+    if (probe?.token && probe?.action) {
+      const captureP = captureRedirect(['https://kwik.cx/d/*']);
+      await tabFetchFormPost(tabId, probe.action, probe.token);
+      const cdnUrl = await captureP;
+      await chrome.tabs.update(tabId, { url: 'about:blank' }).catch(() => undefined);
+      return {
+        action: probe.action,
+        token: probe.token,
+        filename: (probe.title || '').replace(/\s*::\s*Kwik\s*$/i, '').trim(),
+        cdnUrl,
+      };
+    }
+    await sleep(500);
+  }
+  throw new Error('The download form did not appear in time');
+}
+
+function tabFetchFormPost(tabId, url, token) {
+  return chrome.scripting.executeScript({
+    target: { tabId },
+    func: async (u, t) => {
+      try {
+        await fetch(u, {
+          method: 'POST',
+          credentials: 'include',
+          redirect: 'manual',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ _token: t }).toString(),
+        });
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: String((e && e.message) || e) };
+      }
+    },
+    args: [url, token],
+  }).then(([r]) => r?.result || { ok: false }).catch(() => ({ ok: false }));
+}
+
+/* ── capture final CDN URL from the kwik POST redirect ──────── */
+
+function captureRedirect(captureUrls) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (url) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        chrome.webRequest.onBeforeRedirect.removeListener(onRedirect);
+        chrome.webRequest.onResponseStarted.removeListener(onStarted);
+        chrome.webRequest.onCompleted.removeListener(onCompleted);
+      } catch {}
+      resolve(url);
+    };
+    const extract = (details) => {
+      const loc = (details.responseHeaders || []).find((h) => h.name.toLowerCase() === 'location');
+      if (loc && loc.value) finish(loc.value);
+    };
+    const onRedirect = (details) => {
+      if (details.redirectUrl && !details.redirectUrl.startsWith('data:')) finish(details.redirectUrl);
+      else extract(details);
+    };
+    const onStarted = extract;
+    const onCompleted = extract;
+    const timer = setTimeout(() => finish(null), 30000);
+    try {
+      chrome.webRequest.onBeforeRedirect.addListener(onRedirect, { urls: captureUrls }, ['responseHeaders']);
+      chrome.webRequest.onResponseStarted.addListener(onStarted, { urls: captureUrls }, ['responseHeaders']);
+      chrome.webRequest.onCompleted.addListener(onCompleted, { urls: captureUrls }, ['responseHeaders']);
+    } catch {
+      finish(null);
+    }
+  });
+}
+
+async function setRefererRule(hostname) {
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: [REFERRER_RULE_ID],
+      addRules: [{
+        id: REFERRER_RULE_ID,
+        priority: 1,
+        action: {
+          type: 'modifyHeaders',
+          requestHeaders: [{ header: 'Referer', operation: 'set', value: 'https://kwik.cx/' }],
+        },
+        condition: { requestDomains: [hostname], resourceTypes: ['xmlhttprequest'] },
+      }],
+    });
+  } catch {}
+}
+
+async function clearRefererRule() {
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [REFERRER_RULE_ID] });
+  } catch {}
+}
+
+/* ── episode processing ─────────────────────────────────────── */
+
+async function processEpisode(payload, signal) {
+  stage('Resolving...');
+  await sleep(350);
+
+  const results = await searchAnime(payload.animeTitle);
+  const hit = results[0];
+  if (!hit?.session) throw new Error(`"${payload.animeTitle}" not found on the source`);
+
+  stage('Finding episode...');
+  const eps = await getEpisodes(hit.session);
+  const ep = eps.find((e) => e.num === Number(payload.episodeNumber));
+  if (!ep) throw new Error(`Episode ${payload.episodeNumber} not found`);
+
+  stage('Reading quality options...');
+  const playHtml = await fetchText(`${BASE}/play/${hit.session}/${ep.session}`);
+  const links = parsePlayLinks(playHtml);
+  if (!links.length) throw new Error('No download links found on the episode page');
+
+  const chosen = pickLink(links, payload.quality || '720p');
+  if (!chosen) throw new Error('No download links found on the episode page');
+
+  stage(`Fetching ${chosen.quality} link...`);
+  const kwikUrl = await resolveKwik(chosen.href);
+
+  stage('Starting download...');
+  const info = await extractKwikForm(kwikUrl);
+  if (!info || !info.token) throw new Error('Could not read the download form');
+
+  let filename = info.filename || safeName(`${payload.animeTitle} - Ep ${padNum(ep.num)} ${chosen.quality}`).replace(/\s+/g, '_') + '.mp4';
+  if (!/\.[a-z0-9]{2,4}$/i.test(filename)) filename += '.mp4';
+
+  let res = null;
+  if (info.cdnUrl) {
+    await setRefererRule(new URL(info.cdnUrl).hostname);
+    try {
+      const r = await fetch(info.cdnUrl, { credentials: 'omit', signal });
+      if (r.ok && r.body) res = r;
+    } catch (e) {
+      if (signal.aborted) throw new Error('Cancelled');
+    }
+  }
+
+  if (!res) {
+    try {
+      const r = await fetch(info.action, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ _token: info.token }).toString(),
+        signal,
+      });
+      if (r.ok && r.body) res = r;
+    } catch (e) {
+      if (signal.aborted) throw new Error('Cancelled');
+    }
+  }
+
+  if (!res || !res.ok || !res.body) throw new Error('Could not start the download stream');
+
+  const disp = res.headers.get('content-disposition') || '';
+  const dm = disp.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+  if (dm && dm[1]) filename = decodeURIComponent(dm[1]);
+
+  const total = Number(res.headers.get('content-length')) || 0;
+
+  // stream into Aurora via chunk relay
+  const reader = res.body.getReader();
+  let received = 0;
+  let pending = [];
+  let pendingBytes = 0;
+  const CHUNK_TARGET = 2 * 1024 * 1024;
+
+  const toB64 = (bytes) => {
+    let binary = '';
+    const arr = new Uint8Array(bytes);
+    const step = 0x8000;
+    for (let i = 0; i < arr.length; i += step) {
+      binary += String.fromCharCode.apply(null, arr.subarray(i, i + step));
+    }
+    return btoa(binary);
+  };
+
+  const sendChunk = async (b64, done) => {
+    const resp = await chrome.runtime.sendMessage({
+      type: 'CHUNK',
+      data: b64,
+      received,
+      total,
+      done,
+      filename,
+    });
+    if (resp?.cancel) throw new Error('Cancelled');
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    pending.push(value);
+    pendingBytes += value.byteLength;
+    if (pendingBytes >= CHUNK_TARGET) {
       const merged = new Uint8Array(pendingBytes);
       let off = 0;
       for (const p of pending) {
         merged.set(p, off);
         off += p.byteLength;
       }
-      await sendChunk(toB64(merged), true);
-    } else {
-      await sendChunk('', true);
+      pending = [];
+      pendingBytes = 0;
+      const pct = total ? Math.round((received / total) * 100) : 0;
+      stage(`Downloading... ${total ? pct + '% — ' : ''}${(received / 1048576).toFixed(0)}MB`);
+      await sendChunk(toB64(merged), false);
     }
-
-    return { ok: true, bytes: received, filename };
-  })();
-}
-
-/* ─── quality pick ──────────────────────────────────────────── */
-
-function pickQuality(links, preferred) {
-  const parsed = links
-    .map((l) => {
-      const qm = l.text.match(/(360|720|1080)p/);
-      const sm = l.text.match(/\((\d+(?:\.\d+)?)\s*MB\)/i);
-      return qm ? { quality: `${qm[1]}p`, href: l.href, sizeMB: sm ? parseFloat(sm[1]) : undefined } : null;
-    })
-    .filter(Boolean);
-  if (parsed.length === 0) return null;
-  return (
-    parsed.find((q) => q.quality === preferred) ??
-    parsed.find((q) => q.quality === '720p') ??
-    parsed[parsed.length - 1]
-  );
-}
-
-/* ─── main pipeline ─────────────────────────────────────────── */
-
-async function runPipeline(payload, report) {
-  const title = payload.animeTitle;
-  const epNum = Number(payload.episodeNumber);
-  const quality = payload.quality || '720p';
-  if (!title || !epNum) throw new Error('Missing animeTitle or episodeNumber');
-
-  const started = Date.now();
-  const tab = await chrome.tabs.create({ url: SOURCE_BASE, active: false });
-  const tabId = tab.id;
-
-  try {
-    report({ stage: 'searching', message: `Opening source for "${title}"...` });
-    await waitTabComplete(tabId);
-    if (!(await solveChallenge(tabId, report))) throw new Error('Security check not solved');
-
-    let anime = await exec(tabId, searchAnimeFn, title);
-    if (!anime?.uuid) throw new Error(`"${title}" not found on source`);
-    report({ stage: 'found_anime', message: `Found: ${anime.name || title}` });
-
-    await navigate(tabId, `${SOURCE_BASE}/anime/${anime.uuid}`);
-    if (!(await solveChallenge(tabId, report))) throw new Error('Security check not solved');
-
-    report({ stage: 'finding_episode', message: `Looking for episode ${epNum}...` });
-    let playUrl = null;
-    for (let page = 1; page <= 40 && !playUrl; page++) {
-      const res = await exec(tabId, findEpisodeFn, epNum);
-      if (res?.href) {
-        playUrl = res.href;
-        break;
-      }
-      if (res?.minOnPage != null && res.minOnPage < epNum) break;
-      if (!res?.nextHref) break;
-      await navigate(tabId, res.nextHref);
-      if (!(await solveChallenge(tabId, report))) throw new Error('Security check not solved');
-    }
-    if (!playUrl) throw new Error(`Episode ${epNum} not found`);
-
-    report({ stage: 'on_play_page', message: `Opening episode ${epNum}...` });
-    await navigate(tabId, playUrl);
-    if (!(await solveChallenge(tabId, report))) throw new Error('Security check not solved');
-
-    const links = await exec(tabId, extractQualityFn);
-    const chosen = pickQuality(links || [], quality);
-    if (!chosen) throw new Error('No download links found');
-
-    report({ stage: 'on_redirect', message: `Fetching ${chosen.quality} link...` });
-    await navigate(tabId, chosen.href);
-    if (!(await solveChallenge(tabId, report))) throw new Error('Security check not solved');
-
-    const kwikUrl = await pollFor(tabId, extractRedirectFn, 30000, report);
-    if (!kwikUrl || !/kwik\.cx/.test(kwikUrl)) throw new Error('Could not reach download page');
-
-    await navigate(tabId, kwikUrl);
-    if (!(await solveChallenge(tabId, report))) throw new Error('Security check not solved');
-
-    report({ stage: 'resolving_link', message: 'Starting download...' });
-    const formReady = await pollFor(tabId, waitForKwikFormFn, 20000, report);
-    if (!formReady) throw new Error('Download form not found');
-
-    currentJobAuroraTab = auroraTabId;
-    report({ stage: 'downloading', message: 'Downloading...' });
-
-    const streamResult = await exec(tabId, streamDownloadFn);
-    currentJobAuroraTab = null;
-
-    if (!streamResult?.ok) throw new Error(streamResult?.error || 'Download stream failed');
-
-    report({
-      stage: 'complete',
-      message: `Downloaded: ${streamResult.filename || 'episode'} (${(streamResult.bytes / 1048576).toFixed(0)}MB)`,
-    });
-    return {
-      ok: true,
-      seconds: Math.round((Date.now() - started) / 1000),
-      filename: streamResult.filename,
-      bytes: streamResult.bytes,
-    };
-  } catch (err) {
-    report({ stage: 'error', message: String(err?.message || err).slice(0, 200) });
-    throw err;
-  } finally {
-    chrome.tabs.remove(tabId).catch(() => undefined);
   }
+  if (pending.length) {
+    const merged = new Uint8Array(pendingBytes);
+    let off = 0;
+    for (const p of pending) {
+      merged.set(p, off);
+      off += p.byteLength;
+    }
+    await sendChunk(toB64(merged), true);
+  } else {
+    await sendChunk('', true);
+  }
+
+  await clearRefererRule();
+  return { bytes: received, filename };
 }
 
-async function runJob(payload, auroraTabId) {
+/* ── job orchestration ──────────────────────────────────────── */
+
+let jobCancelled = false;
+
+function stage(msg) {
+  report({ type: 'PROGRESS', progress: { stage: 'resolving', message: msg } });
+}
+
+async function runJob(payload) {
   jobRunning = true;
-  const report = (progress) => reportTo(auroraTabId, { type: 'PROGRESS', progress });
+  jobCancelled = false;
+  const started = Date.now();
   try {
-    await runPipeline(payload, report);
+    report({ type: 'PROGRESS', progress: { stage: 'searching', message: `Opening source for "${payload.animeTitle}"...` } });
+    const r = await processEpisode(payload, { get aborted() { return jobCancelled; } });
+    report({
+      type: 'PROGRESS',
+      progress: {
+        stage: 'complete',
+        message: `Downloaded: ${r.filename} (${(r.bytes / 1048576).toFixed(0)}MB)`,
+      },
+    });
+  } catch (err) {
+    report({
+      type: 'PROGRESS',
+      progress: { stage: 'error', message: String((err && err.message) || err).slice(0, 220) },
+    });
   } finally {
+    await clearRefererRule();
+    await closeWorkTabs().catch(() => undefined);
+    if (kwikTabId !== null) {
+      await chrome.tabs.remove(kwikTabId).catch(() => undefined);
+      kwikTabId = null;
+    }
     jobRunning = false;
   }
 }
 
-/* exposed for testing */
-globalThis.__auroraRunPipeline = runPipeline;
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg && msg.type === 'CANCEL') jobCancelled = true;
+});

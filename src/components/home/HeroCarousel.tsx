@@ -25,7 +25,7 @@ export default function HeroCarousel({ items }: { items: AnimeSummary[] }) {
   const inList = isInWatchlist(slide.id)
 
   return (
-    <div className="relative h-[58vh] min-h-[420px] max-h-[640px] w-full overflow-hidden">
+    <div className="relative h-[58vh] min-h-[440px] md:h-[68vh] md:min-h-[520px] md:max-h-[720px] w-full overflow-hidden">
       <AnimatePresence mode="sync">
         <motion.div
           key={slide.id}
@@ -47,14 +47,14 @@ export default function HeroCarousel({ items }: { items: AnimeSummary[] }) {
       </AnimatePresence>
 
       <div className="absolute inset-0 flex items-end">
-        <div className="px-4 md:px-10 pb-16 md:pb-20 max-w-2xl">
+        <div className="px-4 md:px-10 pb-16 md:pb-24 max-w-2xl">
           <motion.div
             key={`info-${slide.id}`}
             initial={{ y: 24, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={{ delay: 0.25, duration: 0.6 }}
           >
-            <div className="flex items-center gap-2 text-xs font-semibold">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
               <span className="bg-gradient-to-r from-brand2 to-brand px-2.5 py-1 rounded-md">#1 SPOTLIGHT</span>
               {slide.rating != null && (
                 <span className="glass px-2 py-1 rounded-md flex items-center gap-1">
@@ -65,7 +65,7 @@ export default function HeroCarousel({ items }: { items: AnimeSummary[] }) {
               {slide.year && <span className="glass px-2 py-1 rounded-md">{slide.year}</span>}
             </div>
 
-            <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight mt-3 leading-tight line-clamp-2">
+            <h1 className="text-3xl md:text-4xl xl:text-5xl font-extrabold tracking-tight mt-3 leading-tight line-clamp-2">
               {slide.title}
             </h1>
 

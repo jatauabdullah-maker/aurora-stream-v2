@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
-import { useDownloads } from '../hooks/useDownloads'
 import { usePWAInstall } from '../hooks/usePWA'
 import { checkExtension } from '../services/extension'
 import { classNames } from '../utils/helpers'
@@ -10,7 +9,6 @@ import toast from 'react-hot-toast'
 
 export default function Settings() {
   const { settings, updateSettings } = useApp()
-  const { setConcurrency } = useDownloads()
   const { canInstall, installed, promptInstall } = usePWAInstall()
   const navigate = useNavigate()
   const [extStatus, setExtStatus] = useState<{ installed: boolean; version?: string } | null>(null)
@@ -93,21 +91,10 @@ export default function Settings() {
         </Section>
 
         <Section title="Downloads">
-          <Row label="Simultaneous downloads" hint="How many episodes download at once">
-            <select
-              value={settings.maxConcurrentDownloads}
-              onChange={(e) => {
-                const n = Number(e.target.value)
-                updateSettings({ maxConcurrentDownloads: n })
-                setConcurrency(n)
-              }}
-              className="bg-surface2 border border-line rounded-lg px-3 py-2 text-sm outline-none focus:border-brand/60"
-            >
-              {[1, 2, 3, 4].map((n) => (
-                <option key={n} value={n}>{n}</option>
-              ))}
-            </select>
-          </Row>
+          <p className="text-xs text-muted -mt-1">
+            Downloads run through the Aurora Downloader extension and save for offline watching.
+            Episodes are fetched one at a time with pacing to keep the source happy.
+          </p>
 
           <div className="border-t border-line pt-4 mt-4">
             <div className="flex items-center justify-between gap-4">

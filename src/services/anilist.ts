@@ -336,6 +336,7 @@ export async function alEpisodes(id: string): Promise<Episode[]> {
     `query ($id: Int) {
       Media(id: $id, type: ANIME) {
         id
+        status
         episodes
         bannerImage
         coverImage { extraLarge }

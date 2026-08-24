@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useDownloads } from '../hooks/useDownloads'
 import { formatBytes, classNames } from '../utils/helpers'
 import { IconPause, IconPlay, IconTrash, IconDownload } from '../components/common/Icons'
@@ -7,6 +8,7 @@ import toast from 'react-hot-toast'
 
 export default function Downloads() {
   const { items, pause, resume, remove, clearCompleted } = useDownloads()
+  const navigate = useNavigate()
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null)
   const [deviceFiles, setDeviceFiles] = useState<DeviceDownload[] | null>(null)
 
@@ -77,7 +79,20 @@ export default function Downloads() {
         <div className="space-y-8 mt-6">
           {active.length > 0 && <Section title="In Progress" items={active} onPause={pause} onResume={resume} onRemove={remove} onChanged={refreshStorage} />}
           {paused.length > 0 && <Section title="Paused / Failed" items={paused} onPause={pause} onResume={resume} onRemove={remove} onChanged={refreshStorage} />}
-          {completed.length > 0 && <Section title="Completed" items={completed} onPause={pause} onResume={resume} onRemove={remove} onChanged={refreshStorage} />}
+          {completed.length > 0 && (
+            <Section
+              title="Completed — watch offline"
+              items={completed}
+              onPause={pause}
+              onResume={resume}
+              onRemove={remove}
+              onChanged={refreshStorage}
+              onPlay={(id) => {
+                const it = completed.find((c) => c.id === id)
+                if (it) navigate(`/watch/${it.animeId}/${it.id}`)
+              }}
+            />
+          )}
           {deviceFiles && deviceFiles.length > 0 && (
             <section>
               <h2 className="text-sm font-bold text-muted uppercase tracking-wider mb-3">On this device (MP4s)</h2>
@@ -121,6 +136,7 @@ function Section({
   onResume,
   onRemove,
   onChanged,
+  onPlay,
 }: {
   title: string
   items: import('../types').DownloadItem[]
@@ -128,6 +144,7 @@ function Section({
   onResume: (id: string) => void
   onRemove: (id: string) => void
   onChanged: () => void
+  onPlay?: (id: string) => void
 }) {
   return (
     <section>
@@ -166,6 +183,17 @@ function Section({
               )}
             </div>
             <div className="flex items-center gap-1 shrink-0">
+              {d.status === 'completed' && !d.external && onPlay && (
+                <button
+                  onClick={() => onPlay(d.id)}
+                  className="flex items-center gap-1.5 bg-gradient-to-r from-brand2 to-brand rounded-lg px-3 py-1.5 text-xs font-bold"
+                >
+                  <IconPlay width={13} height={13} /> Play
+                </button>
+              )}
+              {d.status === 'completed' && d.external && (
+                <span className="text-[11px] text-muted px-2">In Downloads folder</span>
+              )}
               {d.status === 'downloading' && (
                 <button onClick={() => onPause(d.id)} className="p-2 text-muted hover:text-white" aria-label="Pause">
                   <IconPause width={16} height={16} />
