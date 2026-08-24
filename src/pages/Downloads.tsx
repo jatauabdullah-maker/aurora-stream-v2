@@ -4,11 +4,50 @@ import { useDownloads } from '../hooks/useDownloads'
 import { formatBytes, classNames } from '../utils/helpers'
 import { IconPause, IconPlay, IconTrash, IconDownload } from '../components/common/Icons'
 import { listDeviceDownloads, openDeviceDownload, type DeviceDownload } from '../services/extension'
+import { handleGet, handlePut } from '../services/idb'
+import LocalPlayerModal from '../components/common/LocalPlayerModal'
 import toast from 'react-hot-toast'
 
 export default function Downloads() {
   const { items, pause, resume, remove, clearCompleted } = useDownloads()
   const navigate = useNavigate()
+  const [player, setPlayer] = useState<{ name: string; url: string } | null>(null)
+
+  const playDeviceFile = async (f: DeviceDownload) => {
+    try {
+      type PermHandle = FileSystemFileHandle & {
+        queryPermission?: (o: { mode: 'read' }) => Promise<PermissionState>
+        requestPermission?: (o: { mode: 'read' }) => Promise<PermissionState>
+      }
+      let handle: PermHandle | undefined = (await handleGet(f.filename)) as PermHandle | undefined
+      if (handle?.queryPermission) {
+        let perm = await handle.queryPermission({ mode: 'read' })
+        if (perm !== 'granted' && handle.requestPermission) {
+          perm = await handle.requestPermission({ mode: 'read' })
+        }
+        if (perm !== 'granted') handle = undefined
+      }
+
+      if (!handle) {
+        const picks = (await (window as any).showOpenFilePicker({
+          startIn: 'downloads',
+          types: [{ description: 'Video', accept: { 'video/mp4': ['.mp4'] } }],
+          multiple: false,
+        })) as PermHandle[]
+        handle = picks[0]
+        await handlePut(f.filename, handle)
+      }
+
+      const file = await handle.getFile()
+      const url = URL.createObjectURL(file)
+      setPlayer({ name: f.filename, url })
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return
+      // picker unavailable (Firefox/mobile) — fall back to the extension opener
+      const ok = await openDeviceDownload(f.id)
+      if (!ok) toast.error('Could not open the file')
+    }
+  }
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null)
   const [deviceFiles, setDeviceFiles] = useState<DeviceDownload[] | null>(null)
 
@@ -109,14 +148,10 @@ export default function Downloads() {
                       </p>
                     </div>
                     <button
-                      onClick={() => {
-                        void openDeviceDownload(f.id).then((ok) => {
-                          if (!ok) toast.error('Could not open the file')
-                        })
-                      }}
-                      className="shrink-0 glass rounded-lg px-3 py-1.5 text-xs font-semibold hover:bg-white/15"
+                      onClick={() => void playDeviceFile(f)}
+                      className="shrink-0 flex items-center gap-1.5 bg-gradient-to-r from-brand2 to-brand rounded-lg px-3 py-1.5 text-xs font-bold"
                     >
-                      Open
+                      <IconPlay width={13} height={13} /> Play in Aurora
                     </button>
                   </li>
                 ))}
@@ -125,6 +160,16 @@ export default function Downloads() {
           )}
         </div>
       )}
+
+      <LocalPlayerModal
+        open={!!player}
+        name={player?.name ?? ''}
+        url={player?.url ?? ''}
+        onClose={() => {
+          if (player) URL.revokeObjectURL(player.url)
+          setPlayer(null)
+        }}
+      />
     </div>
   )
 }
