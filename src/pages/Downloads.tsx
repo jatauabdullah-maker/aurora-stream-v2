@@ -149,6 +149,7 @@ export default function Downloads() {
                 const it = completed.find((c) => c.id === id)
                 if (it) navigate(`/watch/${it.animeId}/${it.id}`)
               }}
+              onSave={saveToFile}
             />
           )}
           {deviceFiles && deviceFiles.length > 0 && (
@@ -201,6 +202,7 @@ function Section({
   onRemove,
   onChanged,
   onPlay,
+  onSave,
 }: {
   title: string
   items: import('../types').DownloadItem[]
@@ -209,6 +211,7 @@ function Section({
   onRemove: (id: string) => void
   onChanged: () => void
   onPlay?: (id: string) => void
+  onSave?: (id: string) => void
 }) {
   return (
     <section>
@@ -256,7 +259,7 @@ function Section({
                     <IconPlay width={13} height={13} /> Play
                   </button>
                   <button
-                    onClick={() => void saveToFile(d.id)}
+                    onClick={() => onSave?.(d.id)}
                     className="p-2 text-muted hover:text-white"
                     aria-label="Save as MP4 file"
                     title="Save as MP4 file"
