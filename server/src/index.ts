@@ -3,7 +3,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import cors from 'cors';
 import { resolveEpisode } from './resolver.js';
 import { enqueue, queueDepth } from './queue.js';
-import { isBrowserConnected, closeBrowser } from './browser.js';
+import { isBrowserConnected, closeBrowser, withPage } from './browser.js';
 import { cacheSize } from './cache.js';
 import { availableKeyCount } from './mistral.js';
 import { serveFileHandler, cleanupFiles } from './fileproxy.js';
