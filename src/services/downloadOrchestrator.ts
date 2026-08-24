@@ -36,7 +36,13 @@ export async function startSingleDownload(
   target: SingleDownloadTarget,
   quality: string,
   onProgress?: (stage: string, message: string) => void
-): Promise<{ ok: boolean; error?: string; source?: ResolvedSource }> {
+): Promise<{ ok: boolean; error?: string; source?: ResolvedSource; noMethod?: boolean }> {
+  // clean up a previous failed attempt so retry starts fresh
+  const existing = downloadEngine.getSnapshot().find((d) => d.id === target.episodeId)
+  if (existing && existing.status === 'error') {
+    await downloadEngine.remove(target.episodeId)
+  }
+
   // 1. Aurora Downloader extension (runs in the user's browser — no server needed)
   const ext = await checkExtension()
   if (ext.installed) {
@@ -56,6 +62,10 @@ export async function startSingleDownload(
         onProgress?.(p.stage, p.message)
       }
     )
+    if (result.ok && result.blob) {
+      await downloadEngine.markCompletedWithBlob(target.episodeId, result.blob)
+      return { ok: true }
+    }
     if (result.ok) {
       downloadEngine.markCompletedExternal(target.episodeId)
       return { ok: true }
@@ -66,7 +76,7 @@ export async function startSingleDownload(
 
   // 2. Server-side resolver
   if (!resolverConfigured()) {
-    return { ok: false, error: 'No download method available. Install the Aurora Downloader (Settings → Downloads) or set VITE_RESOLVER_API.' }
+    return { ok: false, noMethod: true, error: 'No download source available on this device' }
   }
 
   downloadEngine.addResolving({

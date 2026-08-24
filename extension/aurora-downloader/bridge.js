@@ -25,9 +25,16 @@ window.addEventListener('message', (event) => {
   }
 });
 
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg && msg.type === 'PROGRESS') {
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (!msg) return;
+  if (msg.type === 'PROGRESS') {
     window.postMessage({ tag: TAG, type: 'PROGRESS', progress: msg.progress }, window.location.origin);
+  } else if (msg.type === 'CHUNK') {
+    window.postMessage(
+      { tag: TAG, type: 'CHUNK', data: msg.data, received: msg.received, total: msg.total, done: msg.done },
+      window.location.origin
+    );
+    sendResponse({ ok: true });
   }
 });
 

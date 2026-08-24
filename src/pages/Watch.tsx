@@ -6,7 +6,7 @@ import { useApp } from '../context/AppContext'
 import { useProgressTracker } from '../hooks/usePlayer'
 import { formatDuration, formatBytes, classNames } from '../utils/helpers'
 import { IconBack, IconChevronLeft, IconChevronRight, IconDownload } from '../components/common/Icons'
-import { DownloadDialog, DownloadFailureDialog } from '../components/common/DownloadDialog'
+import { DownloadDialog, DownloadFailureDialog, NoDownloadMethodDialog } from '../components/common/DownloadDialog'
 import { useDownloads } from '../hooks/useDownloads'
 import { downloadEngine } from '../services/downloads'
 import { startSingleDownload, lowerQuality } from '../services/downloadOrchestrator'
@@ -26,7 +26,8 @@ export default function Watch() {
   const { items: downloads } = useDownloads()
   const [dlDialogOpen, setDlDialogOpen] = useState(false)
   const [failure, setFailure] = useState<{ quality: string; error: string } | null>(null)
-
+  const [noMethod, setNoMethod] = useState(false)
+  
   const episode = useMemo(() => episodes.find((e) => e.id === episodeId), [episodes, episodeId])
   const { track, getInitialPosition } = useProgressTracker(anime, episode ?? null)
 
@@ -102,7 +103,9 @@ export default function Watch() {
     )
 
     if (result.ok) {
-      toast.success(`EP ${episode.number}: ${result.source?.filename ?? 'saved to Downloads'}`)
+      toast.success(`EP ${episode.number} downloaded — ready for offline watching`)
+    } else if (result.noMethod) {
+      setNoMethod(true)
     } else {
       setFailure({ quality, error: result.error ?? 'Download failed' })
     }
@@ -293,6 +296,36 @@ export default function Watch() {
         onRetry={retryFailure}
         onLowerQuality={failure && lowerQuality(failure.quality) ? tryLowerQuality : null}
       />
+
+      <NoDownloadMethodDialog
+        open={noMethod}
+        isMobile={/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)}
+        onClose={() => setNoMethod(false)}
+        onOpenSettings={() => navigate('/settings')}
+      />
+
+      {(() => {
+        const active = downloads.find(
+          (d) => d.id === episodeId && (d.status === 'resolving' || d.status === 'downloading' || d.status === 'pending')
+        )
+        if (!active) return null
+        return (
+          <div className="fixed bottom-20 md:bottom-6 right-4 z-40 glass rounded-2xl px-5 py-4 shadow-2xl min-w-[240px]">
+            <p className="text-sm font-bold flex items-center gap-2">
+              <span className="animate-spin inline-block">⟳</span> Downloading EP {active.episodeNumber}
+            </p>
+            <p className="text-xs text-muted mt-1 truncate max-w-[220px]">
+              {active.resolverProgress?.message ?? (active.status === 'downloading' ? `${active.progress}%` : 'Preparing...')}
+            </p>
+            <div className="h-1.5 bg-white/10 rounded-full overflow-hidden mt-2">
+              <div
+                className="h-full bg-gradient-to-r from-brand2 to-brand rounded-full transition-all"
+                style={{ width: `${Math.max(4, active.progress)}%` }}
+              />
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

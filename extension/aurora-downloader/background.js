@@ -27,9 +27,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     });
     return;
   }
+
+  if (msg.type === 'CHUNK') {
+    // relay stream chunks from the kwik tab to the Aurora tab
+    if (currentJobAuroraTab) {
+      chrome.tabs.sendMessage(currentJobAuroraTab, { type: 'CHUNK', data: msg.data, received: msg.received, total: msg.total, done: msg.done })
+        .then((r) => sendResponse(r))
+        .catch(() => sendResponse({ cancel: true }));
+    } else {
+      sendResponse({ cancel: true });
+    }
+    return true;
+  }
 });
 
 let jobRunning = false;
+let currentJobAuroraTab = null;
 
 function reportTo(auroraTabId, msg) {
   if (!auroraTabId) return;
@@ -177,53 +190,106 @@ function extractQualityFn() {
 }
 
 function extractRedirectFn() {
-  const a = document.querySelector('a.redirect');
-  return a ? a.href : null;
-}
-
-function submitFormFn() {
-  const form = document.querySelector('form[action*="/d/"]');
-  if (!form) return false;
-  form.submit();
-  return true;
-}
-
-/* ─── download tracking ─────────────────────────────────────── */
-
-function waitForDownloadStart(timeoutMs = 90000) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      chrome.downloads.onCreated.removeListener(listener);
-      reject(new Error('Download did not start (no response from source)'));
-    }, timeoutMs);
-    const listener = (item) => {
-      clearTimeout(timer);
-      chrome.downloads.onCreated.removeListener(listener);
-      resolve(item);
-    };
-    chrome.downloads.onCreated.addListener(listener);
-  });
-}
-
-function trackDownloadProgress(downloadId, report) {
-  const timer = setInterval(async () => {
-    try {
-      const [item] = await chrome.downloads.search({ id: downloadId });
-      if (!item) return;
-      if (item.totalBytes > 0) {
-        const pct = Math.round((item.bytesReceived / item.totalBytes) * 100);
-        report({
-          stage: 'downloading',
-          message: `Downloading... ${pct}% (${(item.bytesReceived / 1048576).toFixed(0)}MB)`,
-        });
-      }
-      if (item.state === 'complete' || item.state === 'interrupted') {
-        clearInterval(timer);
-      }
-    } catch {
-      clearInterval(timer);
+  return (async () => {
+    // pahe.win builds the Continue link after a short countdown — poll for it
+    for (let i = 0; i < 30; i++) {
+      const a = document.querySelector('a.redirect');
+      if (a?.href) return a.href;
+      await new Promise((r) => setTimeout(r, 500));
     }
-  }, 1500);
+    return null;
+  })();
+}
+
+function waitForKwikFormFn() {
+  return (async () => {
+    for (let i = 0; i < 20; i++) {
+      const form = document.querySelector('form[action*="/d/"]');
+      if (form) return true;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return false;
+  })();
+}
+
+/* Streams the MP4 from the kwik page itself (correct Referer + user IP),
+   chunked through the background to the Aurora tab. */
+function streamDownloadFn(reportChunk) {
+  return (async () => {
+    const form = document.querySelector('form[action*="/d/"]');
+    if (!form) return { error: 'Download form not found' };
+
+    const res = await fetch(form.action, {
+      method: 'POST',
+      body: new FormData(form),
+      signal: AbortSignal.timeout(30 * 60 * 1000),
+    });
+    if (!res.ok || !res.body) return { error: 'HTTP ' + res.status };
+
+    const disposition = res.headers.get('content-disposition') || '';
+    const filenameMatch = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+    const filename = filenameMatch ? filenameMatch[1] : null;
+
+    const total = Number(res.headers.get('content-length')) || 0;
+    const reader = res.body.getReader();
+    let received = 0;
+    let pending = [];
+    let pendingBytes = 0;
+    const CHUNK_TARGET = 2 * 1024 * 1024;
+
+    const toB64 = (bytes) => {
+      let binary = '';
+      const arr = new Uint8Array(bytes);
+      const step = 0x8000;
+      for (let i = 0; i < arr.length; i += step) {
+        binary += String.fromCharCode.apply(null, arr.subarray(i, i + step));
+      }
+      return btoa(binary);
+    };
+
+    const sendChunk = async (b64, done) => {
+      const resp = await chrome.runtime.sendMessage({
+        type: 'CHUNK',
+        data: b64,
+        received,
+        total,
+        done,
+      });
+      if (resp?.cancel) throw new Error('Cancelled by user');
+    };
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      pending.push(value);
+      pendingBytes += value.byteLength;
+      if (pendingBytes >= CHUNK_TARGET) {
+        const merged = new Uint8Array(pendingBytes);
+        let off = 0;
+        for (const p of pending) {
+          merged.set(p, off);
+          off += p.byteLength;
+        }
+        pending = [];
+        pendingBytes = 0;
+        await sendChunk(toB64(merged), false);
+      }
+    }
+    if (pending.length) {
+      const merged = new Uint8Array(pendingBytes);
+      let off = 0;
+      for (const p of pending) {
+        merged.set(p, off);
+        off += p.byteLength;
+      }
+      await sendChunk(toB64(merged), true);
+    } else {
+      await sendChunk('', true);
+    }
+
+    return { ok: true, bytes: received, filename };
+  })();
 }
 
 /* ─── quality pick ──────────────────────────────────────────── */
@@ -302,49 +368,33 @@ async function runPipeline(payload, report) {
     if (!(await solveChallenge(tabId, report))) throw new Error('Security check not solved');
 
     report({ stage: 'resolving_link', message: 'Starting download...' });
-    const submitted = await exec(tabId, submitFormFn);
-    if (!submitted) throw new Error('Download form not found');
+    const formReady = await exec(tabId, waitForKwikFormFn);
+    if (!formReady) throw new Error('Download form not found');
 
-    const item = await waitForDownloadStart();
+    currentJobAuroraTab = auroraTabId;
     report({ stage: 'downloading', message: 'Downloading...' });
-    trackDownloadProgress(item.id, report);
 
-    await waitDownloadSettled(item.id);
-    const [final] = await chrome.downloads.search({ id: item.id });
-    if (final?.state === 'interrupted') throw new Error('Download interrupted');
+    const streamResult = await exec(tabId, streamDownloadFn);
+    currentJobAuroraTab = null;
+
+    if (!streamResult?.ok) throw new Error(streamResult?.error || 'Download stream failed');
 
     report({
       stage: 'complete',
-      message: `Saved to Downloads: ${final?.filename?.split(/[\\/]/).pop() || 'episode'}`,
+      message: `Downloaded: ${streamResult.filename || 'episode'} (${(streamResult.bytes / 1048576).toFixed(0)}MB)`,
     });
-    return { ok: true, seconds: Math.round((Date.now() - started) / 1000) };
+    return {
+      ok: true,
+      seconds: Math.round((Date.now() - started) / 1000),
+      filename: streamResult.filename,
+      bytes: streamResult.bytes,
+    };
   } catch (err) {
     report({ stage: 'error', message: String(err?.message || err).slice(0, 200) });
     throw err;
   } finally {
     chrome.tabs.remove(tabId).catch(() => undefined);
   }
-}
-
-function waitDownloadSettled(downloadId, timeoutMs = 30 * 60 * 1000) {
-  return new Promise((resolve) => {
-    const timer = setInterval(async () => {
-      try {
-        const [item] = await chrome.downloads.search({ id: downloadId });
-        if (!item || item.state === 'complete' || item.state === 'interrupted') {
-          clearInterval(timer);
-          resolve();
-        }
-      } catch {
-        clearInterval(timer);
-        resolve();
-      }
-    }, 3000);
-    setTimeout(() => {
-      clearInterval(timer);
-      resolve();
-    }, timeoutMs);
-  });
 }
 
 async function runJob(payload, auroraTabId) {

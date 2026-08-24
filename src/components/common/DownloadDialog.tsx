@@ -145,3 +145,71 @@ export function DownloadFailureDialog({
     </AnimatePresence>
   )
 }
+
+export interface NoDownloadMethodProps {
+  open: boolean
+  isMobile: boolean
+  onClose: () => void
+  onOpenSettings: () => void
+}
+
+export function NoDownloadMethodDialog({ open, isMobile, onClose, onOpenSettings }: NoDownloadMethodProps) {
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ y: 40, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 40, opacity: 0 }}
+            transition={{ type: 'spring', damping: 28, stiffness: 350 }}
+            className="glass rounded-2xl w-full max-w-md p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-bold text-lg">
+              {isMobile ? '📱 No download source on this device' : '⚡ One-time setup needed'}
+            </h3>
+
+            {isMobile ? (
+              <p className="text-sm text-muted mt-3 leading-relaxed">
+                Automatic downloads need a browser that supports extensions — try{' '}
+                <b className="text-white">Firefox on Android</b>. On this device, streaming works
+                perfectly but downloads aren't available.
+              </p>
+            ) : (
+              <>
+                <p className="text-sm text-muted mt-3 leading-relaxed">
+                  Install the <b className="text-white">Aurora Downloader</b> extension — takes ~30
+                  seconds, once. After that, every download is one click and files are saved for
+                  offline watching right inside Aurora.
+                </p>
+                <button
+                  onClick={() => {
+                    onClose()
+                    onOpenSettings()
+                  }}
+                  className="mt-5 w-full bg-gradient-to-r from-brand2 to-brand rounded-xl py-3 font-bold shadow-lg shadow-brand2/30"
+                >
+                  Set it up (Settings → Downloads)
+                </button>
+              </>
+            )}
+
+            <button
+              onClick={onClose}
+              className="mt-3 w-full glass rounded-xl py-2.5 font-semibold text-sm text-muted hover:text-white hover:bg-white/15"
+            >
+              {isMobile ? 'Got it' : 'Not now'}
+            </button>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  )
+}

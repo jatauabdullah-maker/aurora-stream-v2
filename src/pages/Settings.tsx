@@ -16,13 +16,29 @@ export default function Settings() {
   const [extStatus, setExtStatus] = useState<{ installed: boolean; version?: string } | null>(null)
   const [checking, setChecking] = useState(false)
 
-  const refreshExtension = async () => {
+  const runCheck = async (announce = true) => {
     setChecking(true)
     const res = await checkExtension()
     setExtStatus(res)
     setChecking(false)
-    if (res.installed) toast.success(`Aurora Downloader detected (v${res.version})`)
-    else toast('Extension not detected', { icon: '🔍' })
+    if (announce) {
+      if (res.installed) toast.success(`Aurora Downloader detected (v${res.version})`)
+      else toast('Extension not detected', { icon: '🔍' })
+    }
+    return res
+  }
+
+  // after a reload triggered by Re-check, auto-run the check
+  useState(() => {
+    if (sessionStorage.getItem('aurora:ext-recheck') === '1') {
+      sessionStorage.removeItem('aurora:ext-recheck')
+      void runCheck(true)
+    }
+  })
+
+  const recheckWithReload = () => {
+    sessionStorage.setItem('aurora:ext-recheck', '1')
+    window.location.reload()
   }
 
   return (
@@ -113,7 +129,7 @@ export default function Settings() {
                 </p>
               </div>
               <button
-                onClick={() => void refreshExtension()}
+                onClick={() => (extStatus === null ? void runCheck(true) : recheckWithReload())}
                 disabled={checking}
                 className="shrink-0 glass px-3 py-2 rounded-xl text-xs font-semibold hover:bg-white/15 disabled:opacity-40"
               >

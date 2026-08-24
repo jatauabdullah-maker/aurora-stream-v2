@@ -94,6 +94,17 @@ class DownloadEngine {
     this.emit()
   }
 
+  async markCompletedWithBlob(id: string, blob: Blob) {
+    const it = this.items.find((x) => x.id === id)
+    if (!it) return
+    await idbPut(id, blob)
+    it.status = 'completed'
+    it.progress = 100
+    it.blobId = id
+    it.resolverProgress = undefined
+    this.emit()
+  }
+
   retryResolve(id: string) {
     const it = this.items.find((x) => x.id === id)
     if (!it || it.status !== 'error') return
