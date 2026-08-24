@@ -36,7 +36,10 @@ async function findAnimeUuid(ctx: ResolverContext, page: Page, title: string): P
   if (cached && Date.now() < cached.expiresAt) return cached.uuid;
 
   if (!(await safeGoto(page, BASE))) return null;
-  if (!(await ensureNotChallenged(page))) return null;
+  if (!(await ensureNotChallenged(page))) throw new Error('TURNSTILE_FAILED_HOME');
+  if (!/animepahe/i.test(await page.title().catch(() => ''))) {
+    throw new Error('TURNSTILE_FAILED_HOME');
+  }
 
   const input = await page.$('input[name="q"]');
   if (!input) return null;
@@ -233,7 +236,20 @@ export const animepaheSource: SourceAdapter = {
     const page = ctx.page;
 
     emit(onProgress, 'searching', `Searching for "${animeTitle}"...`, request);
-    const uuid = await findAnimeUuid(ctx, page, animeTitle);
+    let uuid: string | null = null;
+    try {
+      uuid = await findAnimeUuid(ctx, page, animeTitle);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('TURNSTILE_FAILED')) {
+        return {
+          episodeNumber,
+          success: false,
+          error: 'Cloudflare protection could not be passed from this server IP. A cf_clearance cookie bootstrap (CF_COOKIES_JSON) or a different IP may be required.',
+        };
+      }
+      throw e;
+    }
     if (!uuid) {
       return { episodeNumber, success: false, error: `Anime "${animeTitle}" not found on animepahe` };
     }

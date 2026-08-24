@@ -23,6 +23,7 @@ ENV HEADLESS=false
 ENV CHROME_CHANNEL=chrome
 ENV USER_DATA_DIR=/tmp/aurora-profile
 ENV DOWNLOAD_DIR=/tmp/aurora-downloads
+ENV NODE_OPTIONS=--max-old-space-size=192
 
 EXPOSE 10000
 

@@ -30,7 +30,23 @@ async function createSession(): Promise<Session> {
   const context = await chromium.launchPersistentContext(USER_DATA_DIR, {
     headless: HEADLESS,
     channel: CHANNEL,
-    args: ['--no-sandbox', '--disable-dev-shm-usage'],
+    args: [
+      '--no-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-extensions',
+      '--disable-sync',
+      '--disable-background-networking',
+      '--disable-default-apps',
+      '--disable-component-update',
+      '--disable-client-side-phishing-detection',
+      '--mute-audio',
+      '--no-first-run',
+      '--renderer-process-limit=1',
+      '--disable-site-isolation',
+      '--disable-features=site-per-process,TranslateUI',
+      '--js-flags=--max-old-space-size=96',
+    ],
   });
 
   const cfCookies = process.env.CF_COOKIES_JSON;

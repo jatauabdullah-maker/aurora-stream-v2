@@ -47,6 +47,27 @@ app.get('/api/health', (_req: Request, res: Response<HealthResponse>) => {
   });
 });
 
+app.get('/api/debug/check', (_req: Request, res: Response) => {
+  enqueue(async () => {
+    try {
+      const out = await withPage(async (page) => {
+        await page.goto('https://animepahe.pw', { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => undefined);
+        await page.waitForTimeout(4000);
+        const title = await page.title().catch(() => '');
+        const frame = page.frames().find((f) => f.url().includes('challenges.cloudflare.com'));
+        const bodyLen = frame
+          ? await frame.evaluate(() => document.body?.innerHTML?.length ?? -1).catch(() => -1)
+          : -1;
+        const hasSearch = !!(await page.$('input[name="q"]').catch(() => null));
+        return { url: page.url().slice(0, 80), title, challengeFrame: !!frame, challengeBodyLen: bodyLen, hasSearch };
+      });
+      res.json({ ok: true, ...out });
+    } catch (e) {
+      res.json({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+});
+
 app.get('/api/file/:fileId', serveFileHandler);
 
 app.post('/api/resolve-stream', (req: Request<{}, {}, ResolveRequest>, res: Response) => {
