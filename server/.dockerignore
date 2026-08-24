@@ -6,5 +6,4 @@ dist
 .gitignore
 README.md
 *.md
-!.dockerignore
-Dockerfile
+.env
