@@ -26,6 +26,11 @@ export interface SingleDownloadTarget {
   poster: string
 }
 
+function anilistIdFrom(id: string): number | undefined {
+  const m = id.match(/(\d+)/)
+  return m ? Number(m[1]) : undefined
+}
+
 export async function startSingleDownload(
   target: SingleDownloadTarget,
   quality: string,
@@ -48,6 +53,7 @@ export async function startSingleDownload(
   try {
     const resolved = await resolveStreamViaResolver(
       target.animeTitle,
+      anilistIdFrom(target.animeId),
       target.episodeNumber,
       quality,
       (p) => {
@@ -88,7 +94,7 @@ export async function startBatchDownload(
     throw new Error('Download service not configured. Set VITE_RESOLVER_API.')
   }
 
-  const jobId = await startBatchResolve(target.animeTitle, episodes, quality)
+  const jobId = await startBatchResolve(target.animeTitle, anilistIdFrom(target.animeId), episodes, quality)
   const reported = new Set<number>()
 
   const poll = async () => {

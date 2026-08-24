@@ -174,13 +174,14 @@ function resolverBase(): string {
 
 export interface ResolveRequest {
   animeTitle: string
+  anilistId?: number
   episodeNumber: number
   preferredQuality?: string
 }
 
 export type ResolverStage =
   | 'queued' | 'searching' | 'found_anime' | 'finding_episode' | 'on_play_page'
-  | 'solving_protection' | 'on_redirect' | 'resolving_link' | 'complete' | 'error'
+  | 'solving_protection' | 'on_redirect' | 'resolving_link' | 'downloading' | 'complete' | 'error'
 
 export interface ResolveProgress {
   stage: ResolverStage
@@ -281,6 +282,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export async function resolveStreamViaResolver(
   animeTitle: string,
+  anilistId: number | undefined,
   episodeNumber: number,
   preferredQuality: string,
   onProgress?: (progress: ResolveProgress) => void,
@@ -292,6 +294,7 @@ export async function resolveStreamViaResolver(
 
   const { jobId } = await postJson<{ jobId: string }>('/api/resolve-stream', {
     animeTitle,
+    anilistId,
     episodeNumber,
     preferredQuality,
   })
@@ -332,6 +335,7 @@ export async function resolveStreamViaResolver(
 
 export async function startBatchResolve(
   animeTitle: string,
+  anilistId: number | undefined,
   episodes: number[],
   preferredQuality: string
 ): Promise<string> {
@@ -340,6 +344,7 @@ export async function startBatchResolve(
   }
   const { jobId } = await postJson<{ jobId: string }>('/api/resolve-batch', {
     animeTitle,
+    anilistId,
     episodes,
     preferredQuality,
   })

@@ -77,7 +77,7 @@ app.get('/api/debug/check', (_req: Request, res: Response) => {
 app.get('/api/file/:fileId', serveFileHandler);
 
 app.post('/api/resolve-stream', (req: Request<{}, {}, ResolveRequest>, res: Response) => {
-  const { animeTitle, episodeNumber, preferredQuality } = req.body ?? {};
+  const { animeTitle, anilistId, episodeNumber, preferredQuality } = req.body ?? {};
 
   if (!animeTitle || typeof episodeNumber !== 'number') {
     return res.status(400).json({ success: false, error: 'animeTitle (string) and episodeNumber (number) are required' });
@@ -85,14 +85,14 @@ app.post('/api/resolve-stream', (req: Request<{}, {}, ResolveRequest>, res: Resp
 
   const id = jobId('job');
   singleJobs.set(id, { status: 'pending' });
-  console.log(`[${new Date().toISOString()}] single job ${id}: "${animeTitle}" EP${episodeNumber} ${preferredQuality ?? '720p'}`);
+  console.log(`[${new Date().toISOString()}] single job ${id}: "${animeTitle}" (al:${anilistId ?? '?'}) EP${episodeNumber} ${preferredQuality ?? '720p'}`);
 
   enqueue(async () => {
     const job = singleJobs.get(id);
     if (!job) return;
     job.status = 'running';
     try {
-      const result = await resolveEpisode({ animeTitle, episodeNumber, preferredQuality }, (progress) => {
+      const result = await resolveEpisode({ animeTitle, anilistId, episodeNumber, preferredQuality }, (progress) => {
         const j = singleJobs.get(id);
         if (j) j.progress = progress;
       });
@@ -131,8 +131,8 @@ app.get('/api/resolve-stream/:jobId', (req: Request<{ jobId: string }>, res: Res
   res.json({ jobId: req.params.jobId, ...job });
 });
 
-app.post('/api/resolve-batch', (req: Request<{}, {}, BatchResolveRequest>, res: Response) => {
-  const { animeTitle, episodes, preferredQuality } = req.body ?? {};
+app.post('/api/resolve-batch', (req: Request<{}, {}, BatchResolveRequest & { anilistId?: number }>, res: Response) => {
+  const { animeTitle, anilistId, episodes, preferredQuality } = req.body ?? {};
 
   if (!animeTitle || !Array.isArray(episodes) || episodes.length === 0) {
     return res.status(400).json({ success: false, error: 'animeTitle (string) and episodes (number[]) are required' });
@@ -168,7 +168,7 @@ app.post('/api/resolve-batch', (req: Request<{}, {}, BatchResolveRequest>, res: 
       ep.status = 'resolving';
       try {
         const result = await resolveEpisode(
-          { animeTitle, episodeNumber: ep.episodeNumber, preferredQuality },
+          { animeTitle, anilistId, episodeNumber: ep.episodeNumber, preferredQuality },
           (progress) => {
             ep.progress = progress;
           }

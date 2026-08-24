@@ -2,6 +2,7 @@ export type Quality = '360p' | '720p' | '1080p';
 
 export interface ResolveRequest {
   animeTitle: string;
+  anilistId?: number;
   episodeNumber: number;
   preferredQuality?: Quality;
 }
@@ -30,6 +31,7 @@ export type PipelineStage =
   | 'solving_protection'
   | 'on_redirect'
   | 'resolving_link'
+  | 'downloading'
   | 'complete'
   | 'error';
 

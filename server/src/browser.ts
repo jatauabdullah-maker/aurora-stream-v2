@@ -21,7 +21,7 @@ let session: Session | null = null;
 let launching: Promise<Session> | null = null;
 
 const ALLOWED_HOSTS =
-  /(^|\.)(animepahe\.pw|pahe\.win|kwik\.cx|owocdn\.top)$/i;
+  /(^|\.)(animepahe\.pw|pahe\.win|kwik\.cx|owocdn\.top|tryembed\.us\.cc|anixx\.cloud|premilkyway\.com)$/i;
 
 async function createSession(): Promise<Session> {
   mkdirSync(USER_DATA_DIR, { recursive: true });

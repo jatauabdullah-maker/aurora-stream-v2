@@ -100,7 +100,7 @@ export interface DownloadItem {
   createdAt: number
   resolverProgress?: {
     stage: 'queued' | 'searching' | 'found_anime' | 'finding_episode' | 'on_play_page' |
-           'solving_protection' | 'on_redirect' | 'resolving_link' | 'complete' | 'error'
+           'solving_protection' | 'on_redirect' | 'resolving_link' | 'downloading' | 'complete' | 'error'
     message: string
   }
 }
