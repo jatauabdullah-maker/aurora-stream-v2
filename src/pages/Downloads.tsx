@@ -4,7 +4,7 @@ import { useDownloads } from '../hooks/useDownloads'
 import { formatBytes, classNames } from '../utils/helpers'
 import { IconPause, IconPlay, IconTrash, IconDownload } from '../components/common/Icons'
 import { listDeviceDownloads, openDeviceDownload, type DeviceDownload } from '../services/extension'
-import { handleGet, handlePut } from '../services/idb'
+import { handleGet, handlePut, idbGet } from '../services/idb'
 import LocalPlayerModal from '../components/common/LocalPlayerModal'
 import toast from 'react-hot-toast'
 
@@ -12,6 +12,25 @@ export default function Downloads() {
   const { items, pause, resume, remove, clearCompleted } = useDownloads()
   const navigate = useNavigate()
   const [player, setPlayer] = useState<{ name: string; url: string } | null>(null)
+
+  const saveToFile = async (id: string) => {
+    try {
+      const blob = await idbGet(id)
+      if (!blob) return toast.error('File data missing')
+      const suggested = `${id}.mp4`
+      const handle = await (window as any).showSaveFilePicker({
+        suggestedName: suggested,
+        types: [{ description: 'MP4 video', accept: { 'video/mp4': ['.mp4'] } }],
+      })
+      const ws = await handle.createWritable()
+      await ws.write(blob)
+      await ws.close()
+      toast.success('Saved to disk')
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return
+      toast.error('Could not save the file')
+    }
+  }
 
   const playDeviceFile = async (f: DeviceDownload) => {
     try {
@@ -229,12 +248,22 @@ function Section({
             </div>
             <div className="flex items-center gap-1 shrink-0">
               {d.status === 'completed' && !d.external && onPlay && (
-                <button
-                  onClick={() => onPlay(d.id)}
-                  className="flex items-center gap-1.5 bg-gradient-to-r from-brand2 to-brand rounded-lg px-3 py-1.5 text-xs font-bold"
-                >
-                  <IconPlay width={13} height={13} /> Play
-                </button>
+                <>
+                  <button
+                    onClick={() => onPlay(d.id)}
+                    className="flex items-center gap-1.5 bg-gradient-to-r from-brand2 to-brand rounded-lg px-3 py-1.5 text-xs font-bold"
+                  >
+                    <IconPlay width={13} height={13} /> Play
+                  </button>
+                  <button
+                    onClick={() => void saveToFile(d.id)}
+                    className="p-2 text-muted hover:text-white"
+                    aria-label="Save as MP4 file"
+                    title="Save as MP4 file"
+                  >
+                    <IconDownload width={15} height={15} />
+                  </button>
+                </>
               )}
               {d.status === 'completed' && d.external && (
                 <span className="text-[11px] text-muted px-2">In Downloads folder</span>
