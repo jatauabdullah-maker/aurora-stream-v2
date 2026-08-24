@@ -79,6 +79,7 @@ export interface BatchUpdateState {
   status: 'running' | 'completed' | 'cancelled'
   completedCount: number
   failedCount: number
+  current?: { episode: number; message: string }
 }
 
 const PACE_MS = 6000
@@ -107,8 +108,16 @@ export async function startBatchDownload(
     let completed = 0
     let failed = 0
 
-    for (const ep of episodes) {
+    for (let i = 0; i < episodes.length; i++) {
+      const ep = episodes[i]
       if (cancelled) break
+
+      onBatchUpdate({
+        status: 'running',
+        completedCount: completed,
+        failedCount: failed,
+        current: { episode: ep, message: `Episode ${ep} — starting...` },
+      })
 
       const result = await startSingleDownload(
         {
@@ -118,7 +127,15 @@ export async function startBatchDownload(
           episodeNumber: ep,
           poster: target.poster,
         },
-        quality
+        quality,
+        (_stage, message) => {
+          onBatchUpdate({
+            status: 'running',
+            completedCount: completed,
+            failedCount: failed,
+            current: { episode: ep, message: `Episode ${ep} — ${message}` },
+          })
+        }
       )
       if (result.ok) completed++
       else failed++
@@ -128,15 +145,25 @@ export async function startBatchDownload(
         status: 'running',
         completedCount: completed,
         failedCount: failed,
+        current: undefined,
       })
 
-      if (!cancelled) await new Promise((r) => setTimeout(r, PACE_MS))
+      if (!cancelled && i < episodes.length - 1) {
+        onBatchUpdate({
+          status: 'running',
+          completedCount: completed,
+          failedCount: failed,
+          current: { episode: episodes[i + 1], message: `Pacing before episode ${episodes[i + 1]}...` },
+        })
+        await new Promise((r) => setTimeout(r, PACE_MS))
+      }
     }
 
     onBatchUpdate({
       status: cancelled ? 'cancelled' : 'completed',
       completedCount: completed,
       failedCount: failed,
+      current: undefined,
     })
   })()
 

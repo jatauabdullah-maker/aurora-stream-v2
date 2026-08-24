@@ -194,8 +194,8 @@ function PlyrPlayer({
   }, [sources, subtitles, poster])
 
   return (
-    <div className="rounded-xl overflow-hidden bg-black shadow-2xl shadow-black/60 ring-1 ring-line">
-      <video ref={ref} playsInline crossOrigin="anonymous" />
+    <div className="rounded-xl overflow-hidden bg-black shadow-2xl shadow-black/60 ring-1 ring-line aspect-video">
+      <video ref={ref} playsInline crossOrigin="anonymous" className="w-full h-full" />
     </div>
   )
 }

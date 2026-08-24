@@ -27,7 +27,12 @@ export default function AnimeDetails() {
   const [downloadingAll, setDownloadingAll] = useState(false)
   const [batchOpen, setBatchOpen] = useState(false)
   const [batchSeason, setBatchSeason] = useState<number | null>(null)
-  const [batchProgress, setBatchProgress] = useState<{ done: number; failed: number; total: number } | null>(null)
+  const [batchProgress, setBatchProgress] = useState<{
+    done: number
+    failed: number
+    total: number
+    current?: { episode: number; message: string }
+  } | null>(null)
   const { isInWatchlist, toggleWatchlist, settings } = useApp()
   const { items: downloads } = useDownloads()
 
@@ -148,10 +153,12 @@ export default function AnimeDetails() {
           if (!ok) toast.error(`EP ${epNum}: ${error ?? 'failed'}`, { duration: 3000 })
         },
         (state) => {
-          if (['completed', 'failed', 'cancelled'].includes(state.status)) {
+          if (state.current) {
+            setBatchProgress((prev) => (prev ? { ...prev, current: state.current } : prev))
+          } else if (['completed', 'failed', 'cancelled'].includes(state.status)) {
             setDownloadingAll(false)
             toast.success(
-              `Batch finished: ${state.completedCount} resolved, ${state.failedCount} failed`,
+              `Batch finished: ${state.completedCount} downloaded${state.failedCount ? `, ${state.failedCount} failed` : ''}`,
               { duration: 5000 }
             )
             setTimeout(() => setBatchProgress(null), 4000)
@@ -351,17 +358,22 @@ export default function AnimeDetails() {
       )}
 
       {batchProgress && (
-        <div className="fixed bottom-20 md:bottom-6 right-4 z-40 glass rounded-2xl px-5 py-4 shadow-2xl min-w-[240px]">
+        <div className="fixed bottom-20 md:bottom-6 right-4 z-40 glass rounded-2xl px-5 py-4 shadow-2xl min-w-[260px] max-w-[300px]">
           <p className="text-sm font-bold flex items-center gap-2">
-            <span className="animate-spin inline-block">⟳</span> Batch resolving
+            <span className="animate-spin inline-block">⟳</span> Batch download
           </p>
-          <p className="text-xs text-muted mt-1">
-            {batchProgress.done} ready · {batchProgress.failed} failed · {batchProgress.total} total
+          <p className="text-xs text-brand mt-1 truncate">
+            {batchProgress.current?.message ?? `${batchProgress.done} ready · ${batchProgress.failed} failed`}
+          </p>
+          <p className="text-[11px] text-muted mt-0.5">
+            {batchProgress.done} done · {batchProgress.failed} failed · {batchProgress.total} total
           </p>
           <div className="h-1.5 bg-white/10 rounded-full overflow-hidden mt-2">
             <div
               className="h-full bg-gradient-to-r from-brand2 to-brand rounded-full transition-all"
-              style={{ width: `${Math.round(((batchProgress.done + batchProgress.failed) / Math.max(1, batchProgress.total)) * 100)}%` }}
+              style={{
+                width: `${Math.round(((batchProgress.done + batchProgress.failed) / Math.max(1, batchProgress.total)) * 100)}%`,
+              }}
             />
           </div>
         </div>

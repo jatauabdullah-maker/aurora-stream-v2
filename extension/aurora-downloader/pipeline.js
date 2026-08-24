@@ -670,7 +670,7 @@ const Pipeline = (() => {
       try {
         const r = await fetch(info.cdnUrl, { credentials: 'omit', signal });
         if (r.ok && r.body) res = r;
-      } catch (e) {
+      } catch {
         if (signal.aborted) throw new Error('Cancelled');
       }
     }
@@ -685,7 +685,7 @@ const Pipeline = (() => {
           signal,
         });
         if (r.ok && r.body) res = r;
-      } catch (e) {
+      } catch {
         if (signal.aborted) throw new Error('Cancelled');
       }
     }
