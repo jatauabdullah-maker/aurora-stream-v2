@@ -817,6 +817,7 @@ async function processEpisode(payload, signal) {
 /* ── job orchestration ──────────────────────────────────────── */
 
 let jobCancelled = false;
+let jobController = null;
 
 function stage(msg) {
   report({ type: 'PROGRESS', progress: { stage: 'resolving', message: msg } });
@@ -825,10 +826,11 @@ function stage(msg) {
 async function runJob(payload) {
   jobRunning = true;
   jobCancelled = false;
+  jobController = new AbortController();
   const started = Date.now();
   try {
     report({ type: 'PROGRESS', progress: { stage: 'searching', message: `Opening source for "${payload.animeTitle}"...` } });
-    const r = await processEpisode(payload, { get aborted() { return jobCancelled; } });
+    const r = await processEpisode(payload, jobController.signal);
     report({
       type: 'PROGRESS',
       progress: {
@@ -853,5 +855,10 @@ async function runJob(payload) {
 }
 
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg && msg.type === 'CANCEL') jobCancelled = true;
+  if (msg && msg.type === 'CANCEL') {
+    jobCancelled = true;
+    try {
+      jobController?.abort();
+    } catch {}
+  }
 });
