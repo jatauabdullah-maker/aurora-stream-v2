@@ -239,7 +239,7 @@ function waitForKwikFormFn() {
 
 /* Streams the MP4 from the kwik page itself (correct Referer + user IP),
    chunked through the background to the Aurora tab. */
-function streamDownloadFn(reportChunk) {
+function streamDownloadFn() {
   return (async () => {
     const form = document.querySelector('form[action*="/d/"]');
     if (!form) return { error: 'Download form not found' };
