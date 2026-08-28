@@ -54,11 +54,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  /* Inspection can take a minute or more (work tabs, challenges). Awaiting the
+     engine's reply inside this handler means the MV3 service worker can be
+     torn down mid-await, which closes the port and surfaces as
+     "The message port closed before a response was received."
+     So: ack immediately and let the engine push INSPECT_RESULT back, exactly
+     like DOWNLOAD does with PROGRESS/CHUNK. */
   if (msg.type === 'INSPECT') {
     (async () => {
+      auroraTabId = sender.tab?.id ?? null;
       const engineTabId = await ensureEngineTab();
-      const resp = await chrome.tabs.sendMessage(engineTabId, { type: 'PIPE_INSPECT', payload: msg.payload || {} });
-      sendResponse(resp ?? { ok: false, error: 'Engine did not respond' });
+      await chrome.tabs.sendMessage(engineTabId, { type: 'PIPE_INSPECT', payload: msg.payload || {} });
+      sendResponse({ ok: true });
     })().catch((e) => {
       sendResponse({ ok: false, error: String((e && e.message) || e).slice(0, 200) });
     });
@@ -97,7 +104,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   /* ── from the engine page ─────────────────────────────────── */
 
-  if (isFromEngine(sender) && (msg.type === 'PROGRESS' || msg.type === 'CHUNK')) {
+  if (isFromEngine(sender) && (msg.type === 'PROGRESS' || msg.type === 'CHUNK' || msg.type === 'INSPECT_RESULT')) {
     if (auroraTabId) {
       chrome.tabs.sendMessage(auroraTabId, msg)
         .then(() => sendResponse({ ok: true }))

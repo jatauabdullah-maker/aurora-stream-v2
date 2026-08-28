@@ -17,7 +17,7 @@ export default function Footer() {
       </div>
       <div className="border-t border-line/30">
         <div className="max-w-[1600px] mx-auto px-4 md:px-10 py-5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted/60">
-          <span>Made with Aurora</span>
+          <span>Made by Abdullah A-A</span>
           <span className="font-medium tracking-wide">v3.0</span>
         </div>
       </div>

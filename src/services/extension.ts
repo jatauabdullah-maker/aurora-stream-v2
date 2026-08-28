@@ -100,16 +100,56 @@ export interface InspectResult {
 }
 
 /** Ask the extension what qualities actually exist for this episode.
- *  This is the "Inspect sources" flow — no download is started. */
-export async function inspectSources(payload: {
-  animeTitle: string
-  episodeNumber: number
-}): Promise<InspectResult> {
+ *
+ *  Inspection can take a while (work tabs, security challenges), far longer
+ *  than a Chrome message port stays open. So the extension acks immediately
+ *  and pushes the answer back as a separate INSPECT_RESULT message, which we
+ *  wait for here. Progress lines arrive as PROGRESS in the meantime. */
+export async function inspectSources(
+  payload: { animeTitle: string; episodeNumber: number },
+  onProgress?: (message: string) => void
+): Promise<InspectResult> {
+  let ack: { ok: boolean; error?: string }
   try {
-    return await post<InspectResult>({ type: 'INSPECT', payload }, 120000)
+    ack = await post<{ ok: boolean; error?: string }>({ type: 'INSPECT', payload }, 15000)
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Inspection failed' }
+    return { ok: false, error: e instanceof Error ? e.message : 'Downloader did not respond' }
   }
+  if (!ack?.ok) return { ok: false, error: ack?.error ?? 'Downloader refused the inspection' }
+
+  return new Promise((resolve) => {
+    let done = false
+    const finish = (result: InspectResult) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      window.removeEventListener('message', listener)
+      resolve(result)
+    }
+
+    // Generous ceiling: a challenge handoff needs the user to click a checkbox.
+    const timer = setTimeout(
+      () => finish({ ok: false, error: 'Inspection timed out — the source may be blocking requests' }),
+      6 * 60 * 1000
+    )
+
+    const listener = (event: MessageEvent) => {
+      if (event.source !== window) return
+      const data = event.data
+      if (!data || data.tag !== TAG) return
+
+      if (data.type === 'INSPECT_RESULT') {
+        finish((data.result as InspectResult) ?? { ok: false, error: 'Empty inspection result' })
+        return
+      }
+      if (data.type === 'PROGRESS') {
+        const p = data.progress as ExtensionProgress
+        if (p?.stage === 'error') finish({ ok: false, error: p.message })
+        else if (p?.message) onProgress?.(p.message)
+      }
+    }
+    window.addEventListener('message', listener)
+  })
 }
 
 export async function startExtensionDownload(

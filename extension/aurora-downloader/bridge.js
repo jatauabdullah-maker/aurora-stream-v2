@@ -36,6 +36,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg) return;
   if (msg.type === 'PROGRESS') {
     window.postMessage({ tag: TAG, type: 'PROGRESS', progress: msg.progress }, window.location.origin);
+  } else if (msg.type === 'INSPECT_RESULT') {
+    window.postMessage({ tag: TAG, type: 'INSPECT_RESULT', result: msg.result }, window.location.origin);
+    sendResponse({ ok: true });
   } else if (msg.type === 'CHUNK') {
     window.postMessage(
       {

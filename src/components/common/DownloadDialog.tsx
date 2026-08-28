@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { classNames, formatBytes } from '../../utils/helpers'
 import { IconDownload, IconX, IconCheck, IconInfo } from './Icons'
@@ -33,38 +33,41 @@ export function DownloadDialog({
 }: DownloadDialogProps) {
   const [quality, setQuality] = useState<string>('720p')
   const [inspecting, setInspecting] = useState(false)
+  const [progress, setProgress] = useState<string | null>(null)
   const [inspected, setInspected] = useState<InspectedSource[] | null>(null)
   const [inspectError, setInspectError] = useState<string | null>(null)
+  const mobile = isMobileDevice()
 
-  // reset inspection whenever the dialog opens for a new episode
-  useEffect(() => {
-    if (open) {
-      setInspected(null)
-      setInspectError(null)
-      setInspecting(false)
-    }
-  }, [open, episodeLabel])
-
-  const runInspect = async () => {
+  const runInspect = useCallback(async () => {
     if (episodeNumber == null) return
     setInspecting(true)
     setInspectError(null)
-    const res = await inspectSources({ animeTitle, episodeNumber })
+    setProgress('Opening the source…')
+    const res = await inspectSources({ animeTitle, episodeNumber }, (m) => setProgress(m))
     setInspecting(false)
+    setProgress(null)
     if (res.ok && res.sources?.length) {
       setInspected(res.sources)
-      // auto-select the best available quality
+      // pre-select the best sub release so one tap is enough
       const best = res.sources.find((s) => s.audio === 'sub') ?? res.sources[0]
       if (best) setQuality(best.quality)
     } else {
       setInspectError(res.error ?? 'No sources found for this episode')
     }
-  }
+  }, [animeTitle, episodeNumber])
 
-  // qualities that actually exist, when we know them
-  const availableQualities = inspected
-    ? [...new Set(inspected.map((s) => s.quality))]
-    : null
+  // Kaze-style: inspecting IS the first step, so it runs the moment the dialog
+  // opens rather than making the user hunt for a button.
+  useEffect(() => {
+    if (!open) return
+    setInspected(null)
+    setInspectError(null)
+    setInspecting(false)
+    setProgress(null)
+    if (!mobile && episodeNumber != null) void runInspect()
+  }, [open, episodeNumber, mobile, runInspect])
+
+  const selected = inspected?.find((s) => s.quality === quality) ?? null
 
   return (
     <AnimatePresence>
@@ -97,111 +100,124 @@ export function DownloadDialog({
               </button>
             </div>
 
-            {/* ── Source inspection (like Kaze) ── */}
-            {!isMobileDevice() && episodeNumber != null && (
-              <div className="mt-5">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs text-muted font-semibold uppercase tracking-wider">Available sources</p>
+            {/* ── Step 1: real sources, read off the episode page ── */}
+            <div className="mt-5">
+              <div className="flex items-center justify-between gap-3 mb-2.5">
+                <p className="text-xs text-muted font-semibold uppercase tracking-wider">
+                  {inspected ? 'Pick a source' : 'Available sources'}
+                </p>
+                {!mobile && episodeNumber != null && (
                   <button
                     onClick={() => void runInspect()}
                     disabled={inspecting}
                     className="flex items-center gap-1.5 text-xs font-semibold text-brand hover:text-white glass px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
                   >
-                    {inspecting ? <><Spinner /> Checking…</> : <><IconInfo width={13} height={13} /> {inspected ? 'Re-check' : 'Inspect sources'}</>}
+                    {inspecting
+                      ? <><Spinner /> Checking…</>
+                      : <><IconInfo width={13} height={13} /> {inspected || inspectError ? 'Re-check' : 'Inspect'}</>}
                   </button>
-                </div>
-
-                {inspecting && (
-                  <p className="text-[11px] text-muted mt-2 leading-relaxed">
-                    Reading the episode page for real quality options — this takes a few seconds.
-                  </p>
-                )}
-
-                {inspectError && (
-                  <div className="mt-2 bg-accent/10 border border-accent/25 rounded-xl px-3 py-2.5">
-                    <p className="text-xs text-accent break-words">{inspectError}</p>
-                  </div>
-                )}
-
-                {inspected && inspected.length > 0 && (
-                  <ul className="mt-2.5 space-y-1.5">
-                    {inspected.map((s, i) => {
-                      const selected = quality === s.quality
-                      return (
-                        <li key={`${s.quality}-${s.group}-${s.audio}-${i}`}>
-                          <button
-                            onClick={() => setQuality(s.quality)}
-                            className={classNames(
-                              'w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left border transition-all duration-200',
-                              selected
-                                ? 'bg-brand/15 border-brand/50 ring-1 ring-brand/30'
-                                : 'bg-surface2 border-line hover:border-brand/40'
-                            )}
-                          >
-                            <span className={classNames('text-sm font-bold tabular-nums shrink-0', selected ? 'text-brand' : '')}>
-                              {s.quality}
-                            </span>
-                            <span className="text-xs text-muted truncate flex-1">{s.group || 'Unknown group'}</span>
-                            <span
-                              className={classNames(
-                                'text-[10px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0',
-                                s.audio === 'dub' ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'
-                              )}
-                            >
-                              {s.audio}
-                            </span>
-                            {s.sizeMB != null && (
-                              <span className="text-[11px] text-muted tabular-nums shrink-0">
-                                {formatBytes(s.sizeMB * 1024 * 1024)}
-                              </span>
-                            )}
-                            {selected && <IconCheck width={14} height={14} className="text-brand shrink-0" />}
-                          </button>
-                        </li>
-                      )
-                    })}
-                  </ul>
                 )}
               </div>
-            )}
 
-            <p className="text-xs text-muted mt-5 mb-2 font-semibold uppercase tracking-wider">
-              {availableQualities ? 'Confirm quality' : 'Quality'}
-            </p>
-            <div className="grid grid-cols-3 gap-2">
-              {QUALITIES.map((q) => {
-                const unavailable = availableQualities ? !availableQualities.includes(q) : false
-                return (
-                  <button
-                    key={q}
-                    onClick={() => setQuality(q)}
-                    disabled={unavailable}
-                    title={unavailable ? 'Not offered for this episode' : undefined}
-                    className={classNames(
-                      'rounded-xl py-3 text-sm font-bold border transition-all duration-200',
-                      quality === q
-                        ? 'bg-gradient-to-br from-brand2 to-brand border-transparent shadow-lg shadow-brand/20'
-                        : unavailable
-                          ? 'bg-surface2/40 border-line/40 text-muted/40 cursor-not-allowed line-through'
-                          : 'bg-surface2 border-line hover:border-brand/60 hover:shadow-[0_0_12px_rgba(107,70,255,0.15)]'
-                    )}
-                  >
-                    {q}
-                  </button>
-                )
-              })}
+              {inspecting && (
+                <div className="bg-surface2 border border-line rounded-xl px-3.5 py-3">
+                  <p className="text-xs text-brand flex items-center gap-2">
+                    <Spinner /> <span className="truncate">{progress ?? 'Reading the episode page…'}</span>
+                  </p>
+                  <p className="text-[11px] text-muted mt-1.5 leading-relaxed">
+                    Aurora is opening the episode to list every real quality and release group.
+                    If a security check appears, solve it once and this continues on its own.
+                  </p>
+                </div>
+              )}
+
+              {inspectError && !inspecting && (
+                <div className="bg-accent/10 border border-accent/25 rounded-xl px-3.5 py-3">
+                  <p className="text-xs text-accent break-words">{inspectError}</p>
+                  <p className="text-[11px] text-muted mt-1.5">
+                    You can still pick a quality below and Aurora will try it directly.
+                  </p>
+                </div>
+              )}
+
+              {inspected && inspected.length > 0 && !inspecting && (
+                <ul className="space-y-1.5">
+                  {inspected.map((s, i) => {
+                    const isSel = quality === s.quality
+                    return (
+                      <li key={`${s.quality}-${s.group}-${s.audio}-${i}`}>
+                        <button
+                          onClick={() => setQuality(s.quality)}
+                          className={classNames(
+                            'w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left border transition-all duration-200',
+                            isSel
+                              ? 'bg-brand/15 border-brand/50 ring-1 ring-brand/30'
+                              : 'bg-surface2 border-line hover:border-brand/40'
+                          )}
+                        >
+                          <span className={classNames('text-sm font-bold tabular-nums shrink-0', isSel && 'text-brand')}>
+                            {s.quality}
+                          </span>
+                          <span className="text-xs text-muted truncate flex-1">{s.group || 'Unknown group'}</span>
+                          <span
+                            className={classNames(
+                              'text-[10px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0',
+                              s.audio === 'dub' ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'
+                            )}
+                          >
+                            {s.audio}
+                          </span>
+                          {s.sizeMB != null && (
+                            <span className="text-[11px] text-muted tabular-nums shrink-0">
+                              {formatBytes(s.sizeMB * 1024 * 1024)}
+                            </span>
+                          )}
+                          {isSel && <IconCheck width={14} height={14} className="text-brand shrink-0" />}
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
             </div>
-            <p className="text-[11px] text-muted mt-2">
-              {availableQualities
-                ? 'Struck-through options are not offered for this episode.'
-                : "If the chosen quality fails, you'll be offered a lower one."}
-            </p>
+
+            {/* ── Fallback picker: only when we could not read the real list ── */}
+            {!inspected && !inspecting && (
+              <>
+                <p className="text-xs text-muted mt-5 mb-2 font-semibold uppercase tracking-wider">Quality</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {QUALITIES.map((q) => (
+                    <button
+                      key={q}
+                      onClick={() => setQuality(q)}
+                      className={classNames(
+                        'rounded-xl py-3 text-sm font-bold border transition-all duration-200',
+                        quality === q
+                          ? 'bg-gradient-to-br from-brand2 to-brand border-transparent shadow-lg shadow-brand/20'
+                          : 'bg-surface2 border-line hover:border-brand/60 hover:shadow-[0_0_12px_rgba(107,70,255,0.15)]'
+                      )}
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-muted mt-2">
+                  If the chosen quality fails, you'll be offered a lower one.
+                </p>
+              </>
+            )}
 
             <button
               onClick={() => onStart(quality)}
-              className="mt-5 w-full flex items-center justify-center gap-2 bg-gradient-to-r from-brand2 to-brand rounded-xl py-3 font-bold shadow-lg shadow-brand2/30 hover:scale-[1.02] transition-transform btn-shimmer"
+              disabled={inspecting}
+              className="mt-5 w-full flex items-center justify-center gap-2 bg-gradient-to-r from-brand2 to-brand rounded-xl py-3 font-bold shadow-lg shadow-brand2/30 hover:scale-[1.02] transition-transform btn-shimmer disabled:opacity-40 disabled:hover:scale-100"
             >
-              <IconDownload width={17} height={17} /> Start Download
+              <IconDownload width={17} height={17} />
+              {inspecting
+                ? 'Reading sources…'
+                : selected
+                  ? `Download ${selected.quality} · ${selected.audio.toUpperCase()}`
+                  : `Download ${quality}`}
             </button>
           </motion.div>
         </motion.div>

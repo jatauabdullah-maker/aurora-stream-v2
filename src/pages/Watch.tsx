@@ -10,6 +10,7 @@ import { DownloadDialog, DownloadFailureDialog, NoDownloadMethodDialog } from '.
 import { useDownloads } from '../hooks/useDownloads'
 import { downloadEngine } from '../services/downloads'
 import { startSingleDownload, lowerQuality } from '../services/downloadOrchestrator'
+import { isMobileDevice } from '../services/extension'
 import toast from 'react-hot-toast'
 import type { AnimeDetails, Episode, StreamResponse } from '../types'
 
@@ -125,6 +126,13 @@ export default function Watch() {
 
   const downloadCurrent = () => {
     if (!anime || !episode) return
+    if (isMobileDevice()) {
+      toast(
+        'Streaming works great here — downloads need the Aurora Downloader on a desktop browser',
+        { icon: '💻', duration: 4500 }
+      )
+      return
+    }
     const existing = downloads.find((d) => d.id === episode.id)
     if (existing?.status === 'completed') {
       return toast('Already downloaded', { icon: '✅' })
@@ -321,7 +329,7 @@ export default function Watch() {
 
       <NoDownloadMethodDialog
         open={noMethod}
-        isMobile={/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)}
+        isMobile={isMobileDevice()}
         onClose={() => setNoMethod(false)}
         onOpenSettings={() => navigate('/settings')}
       />

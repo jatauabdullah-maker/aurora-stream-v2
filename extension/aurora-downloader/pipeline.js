@@ -34,9 +34,10 @@ const Pipeline = (() => {
 
   function stage(msg) {
     setStatus('busy', msg);
-    if (auroraTab) {
-      chrome.runtime.sendMessage({ type: 'PROGRESS', progress: { stage: 'resolving', message: msg } }).catch(() => undefined);
-    }
+    // Always relay — the service worker drops it if no Aurora tab is bound.
+    chrome.runtime
+      .sendMessage({ type: 'PROGRESS', progress: { stage: 'resolving', message: msg } })
+      .catch(() => undefined);
   }
 
   function sendChunk(b64, received, total, done, filename) {
@@ -835,23 +836,35 @@ const Pipeline = (() => {
     }
   }
 
-  async function runInspect(payload) {
+  /* Fire-and-forget, like run(): ack immediately and push the result back via
+     INSPECT_RESULT. Holding the sendResponse port open across the whole
+     inspection lets the MV3 service worker die mid-flight, which the page sees
+     as "The message port closed before a response was received." */
+  function runInspect(payload) {
     if (activeJob && !activeJob.finished) {
-      return { ok: false, error: 'A download is already running — try again when it finishes' };
+      return Promise.resolve({ ok: false, error: 'A download is already running — try again when it finishes' });
     }
+
     const controller = new AbortController();
     activeJob = { cancelled: false, finished: false, controller };
-    try {
-      setStatus('busy', 'Inspecting sources…');
-      const data = await inspect(payload);
-      return { ok: true, ...data };
-    } catch (err) {
-      return { ok: false, error: String((err && err.message) || err).slice(0, 220) };
-    } finally {
-      await closeWorkTabs().catch(() => undefined);
-      activeJob.finished = true;
-      setStatus('idle', 'Idle');
-    }
+
+    (async () => {
+      let result;
+      try {
+        setStatus('busy', 'Inspecting sources…');
+        const data = await inspect(payload);
+        result = { ok: true, ...data };
+      } catch (err) {
+        result = { ok: false, error: String((err && err.message) || err).slice(0, 220) };
+      } finally {
+        await closeWorkTabs().catch(() => undefined);
+        activeJob.finished = true;
+        setStatus('idle', 'Idle');
+      }
+      chrome.runtime.sendMessage({ type: 'INSPECT_RESULT', result }).catch(() => undefined);
+    })();
+
+    return Promise.resolve({ ok: true });
   }
 
   return {

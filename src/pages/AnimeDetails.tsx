@@ -138,6 +138,13 @@ export default function AnimeDetails() {
   const downloadSeason = (season: number) => {
     const eps = seasons.get(season) ?? []
     if (!eps.length) return
+    if (isMobileDevice()) {
+      toast(
+        'Streaming works great here — downloads need the Aurora Downloader on a desktop browser',
+        { icon: '💻', duration: 4500 }
+      )
+      return
+    }
     setBatchSeason(season)
     setBatchOpen(true)
   }
