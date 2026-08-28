@@ -10,7 +10,7 @@ import { DownloadDialog, DownloadFailureDialog, NoDownloadMethodDialog } from '.
 import { useDownloads } from '../hooks/useDownloads'
 import { downloadEngine } from '../services/downloads'
 import { startSingleDownload, lowerQuality } from '../services/downloadOrchestrator'
-import { isMobileDevice } from '../services/extension'
+import { isMobileDevice, checkExtension } from '../services/extension'
 import toast from 'react-hot-toast'
 import type { AnimeDetails, Episode, StreamResponse } from '../types'
 
@@ -124,7 +124,7 @@ export default function Watch() {
     }
   }
 
-  const downloadCurrent = () => {
+  const downloadCurrent = async () => {
     if (!anime || !episode) return
     if (isMobileDevice()) {
       toast(
@@ -140,6 +140,12 @@ export default function Watch() {
     if (existing && ['pending', 'downloading', 'resolving'].includes(existing.status)) {
       return toast('Already in your downloads', { icon: '⏳' })
     }
+
+    // Surface the setup dialog before opening the picker — otherwise inspection
+    // fails with a low-level error and never explains what's actually missing.
+    const ext = await checkExtension()
+    if (!ext.installed) return setNoMethod(true)
+
     setDlDialogOpen(true)
   }
 
@@ -245,7 +251,7 @@ export default function Watch() {
             </Link>
           )}
           <button
-            onClick={downloadCurrent}
+            onClick={() => void downloadCurrent()}
             disabled={!anime || !episode}
             className="flex items-center gap-1.5 glass px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-white/15 disabled:opacity-40"
           >

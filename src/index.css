@@ -231,6 +231,28 @@ select {
   font-family: 'Inter', sans-serif;
 }
 
+/* Before metadata loads, the <video> has no intrinsic size, so Plyr's wrapper
+   collapses and the big play button sits near the top of the frame — it only
+   snaps to centre once playback starts. Pin the player and its wrapper to the
+   full height of our aspect-ratio container so the button is centred from the
+   first paint. */
+.plyr--video,
+.plyr--video .plyr__video-wrapper {
+  height: 100%;
+  width: 100%;
+}
+.plyr--video video {
+  height: 100%;
+  width: 100%;
+  object-fit: contain;
+}
+/* Plyr centres this with transform; make sure it resolves against the full box. */
+.plyr__control--overlaid {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
 /* ── Reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

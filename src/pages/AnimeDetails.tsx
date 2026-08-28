@@ -9,9 +9,9 @@ import { getProgress } from '../services/storage'
 import { formatDuration, classNames } from '../utils/helpers'
 import AnimeRow from '../components/anime/AnimeRow'
 import { BatchDownloadDialog } from '../components/common/BatchDownloadDialog'
-import { DownloadDialog, DownloadFailureDialog } from '../components/common/DownloadDialog'
+import { DownloadDialog, DownloadFailureDialog, NoDownloadMethodDialog } from '../components/common/DownloadDialog'
 import { startBatchDownload, startSingleDownload, lowerQuality } from '../services/downloadOrchestrator'
-import { isMobileDevice } from '../services/extension'
+import { isMobileDevice, checkExtension } from '../services/extension'
 import {
   IconPlay, IconPlus, IconCheck, IconStar, IconDownload,
   IconChevronDown, IconBack, IconClock,
@@ -37,6 +37,7 @@ export default function AnimeDetails() {
   } | null>(null)
   const [dlEpisode, setDlEpisode] = useState<Episode | null>(null)
   const [failure, setFailure] = useState<{ episode: Episode; quality: string; error: string } | null>(null)
+  const [noMethod, setNoMethod] = useState(false)
   const { isInWatchlist, toggleWatchlist } = useApp()
   const { items: downloads } = useDownloads()
 
@@ -97,21 +98,29 @@ export default function AnimeDetails() {
 
   const inList = isInWatchlist(anime.id)
 
+  const mobileDownloadNotice = () =>
+    toast(
+      'Streaming works great here — downloads need the Aurora Downloader on a desktop browser',
+      { icon: '💻', duration: 4500 }
+    )
+
   // Opens the quality/source picker for a single episode.
-  const openEpisodeDownload = (ep: Episode) => {
-    if (isMobileDevice()) {
-      toast(
-        'Streaming works great here — downloads need the Aurora Downloader on a desktop browser',
-        { icon: '💻', duration: 4500 }
-      )
-      return
-    }
+  const openEpisodeDownload = async (ep: Episode) => {
+    if (isMobileDevice()) return void mobileDownloadNotice()
+
     const existing = downloads.find((d) => d.id === ep.id)
     if (existing && ['pending', 'downloading', 'resolving', 'completed'].includes(existing.status)) {
       return toast(existing.status === 'completed' ? 'Already downloaded' : 'Already in your downloads', {
         icon: existing.status === 'completed' ? '✅' : '⏳',
       })
     }
+
+    // Check for the extension up front. Otherwise the dialog opens, inspection
+    // fails with a low-level message, and the user never learns they just need
+    // to install it.
+    const ext = await checkExtension()
+    if (!ext.installed) return setNoMethod(true)
+
     setDlEpisode(ep)
   }
 
@@ -130,21 +139,21 @@ export default function AnimeDetails() {
     )
     if (result.ok) {
       toast.success(`EP ${ep.number} downloaded — ready for offline watching`)
+    } else if (result.noMethod) {
+      setNoMethod(true)
     } else {
       setFailure({ episode: ep, quality, error: result.error ?? 'Download failed' })
     }
   }
 
-  const downloadSeason = (season: number) => {
+  const downloadSeason = async (season: number) => {
     const eps = seasons.get(season) ?? []
     if (!eps.length) return
-    if (isMobileDevice()) {
-      toast(
-        'Streaming works great here — downloads need the Aurora Downloader on a desktop browser',
-        { icon: '💻', duration: 4500 }
-      )
-      return
-    }
+    if (isMobileDevice()) return void mobileDownloadNotice()
+
+    const ext = await checkExtension()
+    if (!ext.installed) return setNoMethod(true)
+
     setBatchSeason(season)
     setBatchOpen(true)
   }
@@ -214,10 +223,11 @@ export default function AnimeDetails() {
         <div className="absolute inset-0 hero-fade" />
         <div className="absolute inset-0 bg-gradient-to-r from-bg/85 via-bg/25 to-transparent" />
         <div className="absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/80 via-black/30 to-transparent" />
+        {/* top-20 on mobile clears the fixed 64px header — top-4 hid it behind the logo bar */}
         <button
           onClick={() => navigate(-1)}
-          className="absolute top-4 left-4 md:top-6 md:left-10 glass rounded-full p-2.5 hover:bg-white/15 z-10"
-          aria-label="Back"
+          className="absolute top-20 left-4 md:top-6 md:left-10 glass rounded-full p-3 md:p-2.5 hover:bg-white/15 z-20"
+          aria-label="Go back"
         >
           <IconBack width={18} height={18} />
         </button>
@@ -312,7 +322,7 @@ export default function AnimeDetails() {
                     <span className="text-muted text-xs font-normal">({eps.length})</span>
                   </button>
                   <button
-                    onClick={() => downloadSeason(season)}
+                    onClick={() => void downloadSeason(season)}
                     disabled={downloadingAll}
                     className="flex items-center gap-2 text-sm font-semibold text-brand hover:text-white glass px-4 py-2 rounded-xl transition-colors disabled:opacity-40"
                   >
@@ -355,7 +365,7 @@ export default function AnimeDetails() {
                               )}
                             </div>
                             <button
-                              onClick={() => openEpisodeDownload(ep)}
+                              onClick={() => void openEpisodeDownload(ep)}
                               className="text-muted hover:text-brand p-2 transition-colors"
                               aria-label={`Download episode ${ep.number}`}
                             >
@@ -455,6 +465,13 @@ export default function AnimeDetails() {
               }
             : null
         }
+      />
+
+      <NoDownloadMethodDialog
+        open={noMethod}
+        isMobile={isMobileDevice()}
+        onClose={() => setNoMethod(false)}
+        onOpenSettings={() => navigate('/settings')}
       />
     </div>
   )

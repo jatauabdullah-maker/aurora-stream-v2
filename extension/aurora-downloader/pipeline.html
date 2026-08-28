@@ -166,8 +166,63 @@
       font-size: 14px;
       color: #9aa1b1;
       line-height: 1.55;
-      margin-bottom: 24px;
+      margin-bottom: 20px;
     }
+
+    /* ── Guidance panel (shown while a job is running) ────── */
+    .guide {
+      display: none;
+      text-align: left;
+      background: #1a1d29;
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 20px;
+    }
+    .guide.show { display: block; }
+
+    .guide-title {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      font-weight: 600;
+      font-size: 13px;
+      color: #eceef4;
+      margin-bottom: 10px;
+      letter-spacing: -.005em;
+    }
+
+    .guide ul { list-style: none; margin: 0; padding: 0; }
+    .guide li {
+      display: flex;
+      gap: 9px;
+      font-size: 12.5px;
+      color: #9aa1b1;
+      line-height: 1.55;
+      margin-bottom: 7px;
+    }
+    .guide li:last-child { margin-bottom: 0; }
+    .guide li .bullet {
+      flex: 0 0 auto;
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: linear-gradient(100deg, #8b7cf8, #4cc3f0);
+      margin-top: 7px;
+    }
+    .guide b { color: #eceef4; font-weight: 600; }
+
+    /* ── Live stage line ─────────────────────────────────── */
+    .stage-line {
+      display: none;
+      font-size: 12.5px;
+      color: #a497ff;
+      background: rgba(139,124,248,.1);
+      border: 1px solid rgba(139,124,248,.22);
+      border-radius: 10px;
+      padding: 10px 13px;
+      margin-bottom: 18px;
+      text-align: left;
+      word-break: break-word;
+    }
+    .stage-line.show { display: block; }
 
     /* ── Pulsing status dot ──────────────────────────────── */
     .status-row {
@@ -236,7 +291,28 @@
       </svg>
     </div>
     <h1 class="engine-title">Aurora Downloader</h1>
-    <p class="engine-subtitle">Engine idling &mdash; downloads are driven from Aurora.</p>
+    <p class="engine-subtitle" id="engineSubtitle">Engine idling &mdash; downloads are driven from Aurora.</p>
+
+    <div class="stage-line" id="stageLine"></div>
+
+    <div class="guide" id="guide">
+      <p class="guide-title">While this runs</p>
+      <ul>
+        <li>
+          <span class="bullet"></span>
+          <span>You can <b>minimise this window</b> and carry on using Aurora &mdash; the download keeps going.</span>
+        </li>
+        <li>
+          <span class="bullet"></span>
+          <span>If a <b>security checkbox</b> appears, Aurora brings that tab to the front. Solve it once, then leave the tab alone.</span>
+        </li>
+        <li>
+          <span class="bullet"></span>
+          <span>Don't close the tabs Aurora opens &mdash; they carry the session the download needs.</span>
+        </li>
+      </ul>
+    </div>
+
     <div class="status-row">
       <span class="status-dot status-dot--idle" id="statusDot"></span>
       <span id="statusLabel">Idle</span>

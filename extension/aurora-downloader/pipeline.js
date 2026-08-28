@@ -20,14 +20,31 @@ const Pipeline = (() => {
   let workWinId = null;
   let kwikTabId = null;
   let auroraTab = null;
+  let engineTabId = null;
 
   /* ── engine page status indicator ──────────────────────────── */
 
   function setStatus(state, label) {
     const dot = document.getElementById('statusDot');
     const text = document.getElementById('statusLabel');
+    const guide = document.getElementById('guide');
+    const stageLine = document.getElementById('stageLine');
+    const subtitle = document.getElementById('engineSubtitle');
+
     if (dot) dot.className = `status-dot status-dot--${state}`;
-    if (text) text.textContent = label;
+    if (text) text.textContent = state === 'busy' ? 'Working' : 'Idle';
+
+    const busy = state === 'busy';
+    if (guide) guide.classList.toggle('show', busy);
+    if (stageLine) {
+      stageLine.classList.toggle('show', busy);
+      if (busy) stageLine.textContent = label;
+    }
+    if (subtitle) {
+      subtitle.textContent = busy
+        ? 'Working on your download.'
+        : 'Engine idling — downloads are driven from Aurora.';
+    }
   }
 
   /* ── messaging to Aurora (relayed by the service worker) ──── */
@@ -158,42 +175,94 @@ const Pipeline = (() => {
     }).then(([r]) => r?.result || { status: 0, error: 'no result' }).catch((e) => ({ status: 0, error: String(e) }));
   }
 
-  function injectBanner(tabId, text) {
+  /* Branded overlay on a work tab. `action: true` renders the loud
+     "solve the checkbox" variant used during a challenge handoff. */
+  function injectBanner(tabId, text, action = false) {
     chrome.scripting.executeScript({
       target: { tabId },
-      func: (t) => {
-        const old = document.getElementById('aurora-banner');
-        if (old) {
-          old.textContent = t;
-          return;
+      func: (t, isAction) => {
+        const ID = 'aurora-banner';
+        let b = document.getElementById(ID);
+        if (!b) {
+          b = document.createElement('div');
+          b.id = ID;
+          document.documentElement.appendChild(b);
+          const style = document.createElement('style');
+          style.textContent =
+            '@keyframes aurora-pulse{0%,100%{box-shadow:0 0 0 0 rgba(139,124,248,.55)}50%{box-shadow:0 0 0 10px rgba(139,124,248,0)}}';
+          document.documentElement.appendChild(style);
         }
-        const b = document.createElement('div');
-        b.id = 'aurora-banner';
-        b.textContent = t;
         b.style.cssText =
-          'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:linear-gradient(100deg,#8b7cf8,#4cc3f0);color:#fff;font:600 14px system-ui,sans-serif;padding:11px 16px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.45);';
-        document.documentElement.appendChild(b);
+          'position:fixed;top:0;left:0;right:0;z-index:2147483647;' +
+          'background:linear-gradient(100deg,#8b7cf8,#4cc3f0);color:#fff;' +
+          'font:700 15px/1.45 Inter,system-ui,sans-serif;padding:14px 18px;' +
+          'text-align:center;box-shadow:0 6px 28px rgba(0,0,0,.5);' +
+          'letter-spacing:-.005em;' +
+          (isAction ? 'animation:aurora-pulse 1.8s ease-in-out infinite;' : '');
+        b.innerHTML =
+          '<span style="display:inline-flex;align-items:center;gap:10px;justify-content:center;flex-wrap:wrap">' +
+          '<span style="width:20px;height:20px;border-radius:6px;background:rgba(255,255,255,.22);' +
+          'display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto">' +
+          '<svg width="11" height="11" viewBox="0 0 24 24" fill="#fff"><path d="M8 5.14v14l11-7z"/></svg></span>' +
+          '<span>' + t + '</span></span>';
       },
-      args: [text],
+      args: [text, action],
     }).catch(() => undefined);
   }
 
+  /* Bring a tab to the user, forcefully.
+     A minimized window will not accept `focused: true` in the same call that
+     activates the tab — the state change has to land first, otherwise the
+     challenge tab stays hidden and the user never sees the checkbox. */
   async function focusTab(tabId, active) {
     try {
-      await chrome.tabs.update(tabId, { active });
+      const tab = await chrome.tabs.get(tabId);
       if (active) {
-        const tab = await chrome.tabs.get(tabId);
-        await chrome.windows.update(tab.windowId, { focused: true, state: 'normal' });
+        // 1. un-minimize, 2. focus the window, 3. activate the tab
+        await chrome.windows.update(tab.windowId, { state: 'normal' }).catch(() => undefined);
+        await sleep(120);
+        await chrome.windows.update(tab.windowId, { focused: true, drawAttention: true }).catch(() => undefined);
+        await chrome.tabs.update(tabId, { active: true, highlighted: true }).catch(() => undefined);
+        await sleep(120);
+
+        // Verify it actually came forward; retry once if Chrome ignored us.
+        const win = await chrome.windows.get(tab.windowId).catch(() => null);
+        if (win && (win.state === 'minimized' || !win.focused)) {
+          await chrome.windows.update(tab.windowId, { state: 'normal', focused: true, drawAttention: true }).catch(() => undefined);
+          await chrome.tabs.update(tabId, { active: true }).catch(() => undefined);
+        }
+      } else {
+        await chrome.tabs.update(tabId, { active: false }).catch(() => undefined);
       }
     } catch {}
   }
 
-  async function focusAuroraBack() {
-    if (auroraTab) await focusTab(auroraTab, true).catch(() => undefined);
+  /* Our own page — the branded engine view. */
+  async function getEngineTab() {
+    if (engineTabId !== null) return engineTabId;
+    try {
+      const t = await chrome.tabs.getCurrent();
+      if (t?.id != null) engineTabId = t.id;
+    } catch {}
+    return engineTabId;
+  }
+
+  /* After a handoff, land the user on the Aurora engine page rather than
+     dumping them on a raw kwik/pahe tab, then tuck the work window away. */
+  async function focusEngineAfterHandoff() {
+    const engine = await getEngineTab();
+    if (engine !== null) {
+      await focusTab(engine, true).catch(() => undefined);
+    } else if (auroraTab) {
+      await focusTab(auroraTab, true).catch(() => undefined);
+    }
     if (workWinId !== null) {
       await chrome.windows.update(workWinId, { state: 'minimized', focused: false }).catch(() => undefined);
     }
   }
+
+  // kept for the paths that just want the work window hidden again
+  const focusAuroraBack = focusEngineAfterHandoff;
 
   /* ── low-level fetch with clearance handoff ────────────────── */
 
@@ -254,12 +323,16 @@ const Pipeline = (() => {
   /* ── cloudflare / turnstile handoff ────────────────────────── */
 
   function clickTurnstileInFrame() {
+    // Turnstile renders inside a cross-origin iframe; executeScript with
+    // allFrames lets us run *inside* it, where the checkbox is same-origin.
     const input = document.querySelector('input[type="checkbox"]');
     if (input) {
       input.click();
       return 'input';
     }
-    const box = document.querySelector('[role="checkbox"], .ctp-checkbox-label, #challenge-stage label');
+    const box = document.querySelector(
+      '[role="checkbox"], .ctp-checkbox-label, .cb-lb label, #challenge-stage label, label.cb-lb'
+    );
     if (box) {
       box.click();
       return 'box';
@@ -269,27 +342,35 @@ const Pipeline = (() => {
 
   async function humanSolve(url, tabId) {
     const u = new URL(url);
-    await chrome.tabs.update(tabId, { url: u.origin + '/', active: true }).catch(() => undefined);
+    await chrome.tabs.update(tabId, { url: u.origin + '/' }).catch(() => undefined);
     await focusTab(tabId, true);
-    injectBanner(tabId, 'Aurora needs ONE click: solve the security checkbox — it continues automatically');
+    injectBanner(
+      tabId,
+      'Aurora needs ONE click — solve the security checkbox below. It continues on its own.',
+      true
+    );
 
     setTimeout(() => {
       chrome.scripting.executeScript({
         target: { tabId, allFrames: true },
         func: clickTurnstileInFrame,
       }).catch(() => undefined);
-    }, 4000);
+    }, 3000);
 
     const deadline = Date.now() + 300000;
+    let ticks = 0;
     while (Date.now() < deadline) {
       await sleep(2500);
       if (activeJob?.cancelled) return false;
       const probe = await tabFetch(tabId, url, { cache: 'no-store' });
       if (probe.status === 200 && !looksLikeChallenge(200, probe.text)) {
-        await focusAuroraBack();
+        injectBanner(tabId, 'Solved — Aurora is continuing. You can leave this alone.');
+        await focusEngineAfterHandoff();
         stage('Security check passed — continuing');
         return true;
       }
+      // Re-assert focus periodically; a reload can bury the window again.
+      if (++ticks % 4 === 0) await focusTab(tabId, true);
     }
     return false;
   }
@@ -359,14 +440,26 @@ const Pipeline = (() => {
   function probePaheDom(tabId) {
     return chrome.scripting.executeScript({
       target: { tabId },
-      func: () => ({
-        host: location.hostname,
-        challenged: /just a moment/i.test(document.title || ''),
-        kwikHref: (() => {
-          const a = document.querySelector('a.redirect[href]');
-          return a && /kwik\./.test(a.href || '') ? a.href : null;
-        })(),
-      }),
+      func: () => {
+        const title = document.title || '';
+        const body = document.body ? document.body.innerText.slice(0, 3000) : '';
+        // Same as kwik: pahe.win can serve the challenge with HTTP 200 and a
+        // normal title, so detect the widget rather than trusting the title.
+        const hasTurnstile = !!document.querySelector(
+          'iframe[src*="challenges.cloudflare.com"], .cf-turnstile, #cf-turnstile, [name="cf-turnstile-response"], #challenge-form, #challenge-stage'
+        );
+        return {
+          host: location.hostname,
+          challenged:
+            hasTurnstile ||
+            /just a moment|checking your browser|verify you are human|needs to review the security/i.test(title + ' ' + body),
+          hasTurnstile,
+          kwikHref: (() => {
+            const a = document.querySelector('a.redirect[href]');
+            return a && /kwik\./.test(a.href || '') ? a.href : null;
+          })(),
+        };
+      },
     }).then(([r]) => r?.result ?? null).catch(async () => {
       if (await tabExists(tabId)) return { navigating: true };
       return { gone: true };
@@ -407,14 +500,25 @@ const Pipeline = (() => {
     const quick = await extractViaXhr();
     if (quick) return quick;
 
-    stage('Security check on pahe.win — handing you the tab');
+    stage('Security check on pahe.win — bringing the tab to you');
     await chrome.tabs.update(tabId, { url: paheUrl }).catch(() => undefined);
     await waitTabComplete(tabId);
-    injectBanner(tabId, 'Aurora needs ONE click: solve the checkbox — then do NOT click anything else');
+    injectBanner(
+      tabId,
+      'Aurora needs ONE click — solve the checkbox below, then leave this tab alone.',
+      true
+    );
     await focusTab(tabId, true);
+    setTimeout(() => {
+      chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        func: clickTurnstileInFrame,
+      }).catch(() => undefined);
+    }, 2500);
 
     let handedOff = true;
     let recreations = 0;
+    let waited = 0;
     for (let i = 0; i < 150; i++) {
       if (activeJob?.cancelled) throw new Error('Cancelled');
       const probe = await probePaheDom(tabId);
@@ -430,9 +534,12 @@ const Pipeline = (() => {
         workTabs.set(host, tabId);
         handedOff = true;
         await waitTabComplete(tabId);
+        await focusTab(tabId, true);
         continue;
       }
       if (probe?.challenged) {
+        // Keep the window in front while they solve it.
+        if (++waited % 3 === 0) await focusTab(tabId, true);
         await sleep(2000);
         continue;
       }
@@ -449,7 +556,7 @@ const Pipeline = (() => {
       if (handedOff) {
         handedOff = false;
         stage('Security check passed — continuing');
-        injectBanner(tabId, 'Solved — Aurora is continuing automatically');
+        injectBanner(tabId, 'Solved — Aurora is continuing. You can leave this alone.');
         await focusAuroraBack();
       }
       const kwik = await extractViaXhr();
@@ -471,19 +578,32 @@ const Pipeline = (() => {
   function probeKwikDom(tabId) {
     return chrome.scripting.executeScript({
       target: { tabId },
-      func: () => ({
-        host: location.hostname,
-        challenged: /just a moment/i.test(document.title || ''),
-        action: (() => {
-          const f = document.querySelector('form[action*="/d/"]');
-          return f ? f.action : null;
-        })(),
-        token: (() => {
-          const i = document.querySelector('form[action*="/d/"] input[name="_token"]');
-          return i ? i.value : null;
-        })(),
-        title: document.title,
-      }),
+      func: () => {
+        const title = document.title || '';
+        const body = document.body ? document.body.innerText.slice(0, 3000) : '';
+        // kwik serves its challenge with HTTP 200 and no "Just a moment" title,
+        // so title-only detection misses it. Look for the widget itself.
+        const hasTurnstile = !!document.querySelector(
+          'iframe[src*="challenges.cloudflare.com"], .cf-turnstile, #cf-turnstile, [name="cf-turnstile-response"], #challenge-form, #challenge-stage'
+        );
+        const challengeText = /just a moment|checking your browser|verify you are human|needs to review the security/i.test(
+          title + ' ' + body
+        );
+        return {
+          host: location.hostname,
+          challenged: hasTurnstile || challengeText,
+          hasTurnstile,
+          action: (() => {
+            const f = document.querySelector('form[action*="/d/"]');
+            return f ? f.action : null;
+          })(),
+          token: (() => {
+            const i = document.querySelector('form[action*="/d/"] input[name="_token"]');
+            return i ? i.value : null;
+          })(),
+          title,
+        };
+      },
     }).then(([r]) => r?.result ?? null).catch(async () => {
       if (await tabExists(tabId)) return { navigating: true };
       return { gone: true };
@@ -551,10 +671,26 @@ const Pipeline = (() => {
       }
       if (probe?.challenged) {
         if (!handedOff) {
-          stage('Security check on kwik — handing you the tab');
+          stage('Security check on kwik — bringing the tab to you');
+          // Force the window forward, then try the auto-click. If the widget
+          // yields to a synthetic click the user never has to touch it; if not,
+          // the tab is already in front of them with a pulsing banner.
           await focusTab(tabId, true);
-          injectBanner(tabId, 'Aurora needs ONE click: solve the checkbox — then do NOT click anything else, it continues automatically');
+          injectBanner(
+            tabId,
+            'Aurora needs ONE click — solve the checkbox below, then leave this tab alone. It continues on its own.',
+            true
+          );
+          setTimeout(() => {
+            chrome.scripting.executeScript({
+              target: { tabId, allFrames: true },
+              func: clickTurnstileInFrame,
+            }).catch(() => undefined);
+          }, 2500);
           handedOff = true;
+        } else {
+          // Keep it in front — some pages steal focus back on reload.
+          await focusTab(tabId, true);
         }
         await sleep(2500);
         continue;
@@ -562,8 +698,8 @@ const Pipeline = (() => {
       if (handedOff) {
         handedOff = false;
         stage('Security check passed — continuing');
-        injectBanner(tabId, 'Solved — Aurora is continuing automatically');
-        await focusAuroraBack();
+        injectBanner(tabId, 'Solved — Aurora is continuing. You can leave this alone.');
+        await focusEngineAfterHandoff();
       }
       if (probe?.token && probe?.action) {
         const captureP = captureRedirect(['https://kwik.cx/d/*']);
