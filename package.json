@@ -1,13 +1,17 @@
 {
   "name": "aurora-stream",
   "private": true,
-  "version": "0.0.0",
+  "version": "3.0.0",
+  "description": "Aurora Stream — a premium installable anime streaming PWA with offline downloads.",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "oxlint",
-    "preview": "vite preview"
+    "lint": "oxlint src",
+    "preview": "vite preview",
+    "ext:zip": "powershell -NoProfile -Command \"Remove-Item public/aurora-downloader.zip -Force -EA SilentlyContinue; Compress-Archive -Path extension/aurora-downloader -DestinationPath public/aurora-downloader.zip -Force\"",
+    "ext:check": "node -e \"['pipeline.js','background.js','bridge.js'].forEach(f=>new Function(require('fs').readFileSync('extension/aurora-downloader/'+f,'utf8')));console.log('extension JS OK')\"",
+    "deploy": "vercel deploy --prod --yes"
   },
   "dependencies": {
     "axios": "^1.19.0",
