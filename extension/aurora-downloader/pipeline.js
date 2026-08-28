@@ -21,9 +21,19 @@ const Pipeline = (() => {
   let kwikTabId = null;
   let auroraTab = null;
 
+  /* ── engine page status indicator ──────────────────────────── */
+
+  function setStatus(state, label) {
+    const dot = document.getElementById('statusDot');
+    const text = document.getElementById('statusLabel');
+    if (dot) dot.className = `status-dot status-dot--${state}`;
+    if (text) text.textContent = label;
+  }
+
   /* ── messaging to Aurora (relayed by the service worker) ──── */
 
   function stage(msg) {
+    setStatus('busy', msg);
     if (auroraTab) {
       chrome.runtime.sendMessage({ type: 'PROGRESS', progress: { stage: 'resolving', message: msg } }).catch(() => undefined);
     }
@@ -160,7 +170,7 @@ const Pipeline = (() => {
         b.id = 'aurora-banner';
         b.textContent = t;
         b.style.cssText =
-          'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:linear-gradient(100deg,#7c5cff,#38bdf8);color:#fff;font:600 14px system-ui,sans-serif;padding:11px 16px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.45);';
+          'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:linear-gradient(100deg,#8b7cf8,#4cc3f0);color:#fff;font:600 14px system-ui,sans-serif;padding:11px 16px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.45);';
         document.documentElement.appendChild(b);
       },
       args: [text],
@@ -749,6 +759,43 @@ const Pipeline = (() => {
     return { bytes: received, filename };
   }
 
+  /* ── source inspection (no download — just list what's available) ── */
+
+  async function inspect(payload) {
+    const results = await searchAnime(payload.animeTitle);
+    const hit = results[0];
+    if (!hit?.session) throw new Error(`"${payload.animeTitle}" not found on the source`);
+
+    const eps = await getEpisodes(hit.session);
+    const ep = eps.find((e) => e.num === Number(payload.episodeNumber));
+    if (!ep) throw new Error(`Episode ${payload.episodeNumber} not found`);
+
+    const playHtml = await fetchText(`${BASE}/play/${hit.session}/${ep.session}`);
+    const links = parsePlayLinks(playHtml);
+    if (!links.length) throw new Error('No download sources found for this episode');
+
+    // de-duplicate by quality+group+audio, keep the first of each
+    const seen = new Set();
+    const sources = [];
+    for (const l of links) {
+      const key = `${l.quality}|${l.group}|${l.dub ? 'dub' : 'sub'}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      sources.push({
+        quality: l.quality,
+        group: l.group,
+        sizeMB: l.sizeMB,
+        audio: l.dub ? 'dub' : 'sub',
+      });
+    }
+
+    // highest quality first, sub before dub
+    const qNum = (q) => parseInt(q, 10) || 0;
+    sources.sort((a, b) => qNum(b.quality) - qNum(a.quality) || (a.audio === b.audio ? 0 : a.audio === 'sub' ? -1 : 1));
+
+    return { title: hit.title || payload.animeTitle, episode: ep.num, sources };
+  }
+
   /* ── job orchestration ─────────────────────────────────────── */
 
   function run(payload, sourceTabId) {
@@ -773,6 +820,7 @@ const Pipeline = (() => {
         await clearRefererRule().catch(() => undefined);
         await closeWorkTabs().catch(() => undefined);
         activeJob.finished = true;
+        setStatus('idle', 'Idle');
       }
     })();
 
@@ -787,8 +835,28 @@ const Pipeline = (() => {
     }
   }
 
+  async function runInspect(payload) {
+    if (activeJob && !activeJob.finished) {
+      return { ok: false, error: 'A download is already running — try again when it finishes' };
+    }
+    const controller = new AbortController();
+    activeJob = { cancelled: false, finished: false, controller };
+    try {
+      setStatus('busy', 'Inspecting sources…');
+      const data = await inspect(payload);
+      return { ok: true, ...data };
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err).slice(0, 220) };
+    } finally {
+      await closeWorkTabs().catch(() => undefined);
+      activeJob.finished = true;
+      setStatus('idle', 'Idle');
+    }
+  }
+
   return {
     run,
+    runInspect,
     cancel,
     isBusy: () => activeJob && !activeJob.finished,
   };
@@ -798,6 +866,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg !== 'object') return;
   if (msg.type === 'PIPE_RUN') {
     Pipeline.run(msg.payload || {}, sender.tab?.id ?? null).then(sendResponse);
+    return true;
+  }
+  if (msg.type === 'PIPE_INSPECT') {
+    Pipeline.runInspect(msg.payload || {}).then(sendResponse);
     return true;
   }
   if (msg.type === 'PIPE_BUSY') {

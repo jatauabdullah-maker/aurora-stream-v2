@@ -18,9 +18,12 @@ export default function AnimeCard({ anime, overlayList = true }: { anime: AnimeS
             alt={anime.title}
             loading="lazy"
             className="w-full h-full object-cover"
+            onError={(e) => {
+              (e.target as HTMLImageElement).src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='300' fill='none'%3E%3Crect width='200' height='300' fill='%23131728'/%3E%3Cpath d='M80 120v60l50-30z' fill='%236b46ff' opacity='.5'/%3E%3C/svg%3E"
+            }}
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent opacity-0 md:group-hover:opacity-100 transition-opacity" />
+          <div className="absolute inset-0 flex items-center justify-center opacity-60 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
             {showOverlay && (
               <span className="bg-brand/90 rounded-full p-3 shadow-lg shadow-brand/40">
                 <IconPlay width={22} height={22} />
@@ -64,7 +67,7 @@ export default function AnimeCard({ anime, overlayList = true }: { anime: AnimeS
             const added = toggleWatchlist({ id: anime.id, title: anime.title, poster: anime.poster, addedAt: Date.now() })
             toast.success(added ? 'Added to My List' : 'Removed from My List')
           }}
-          className="mt-0.5 shrink-0 text-muted hover:text-white transition-colors"
+          className="mt-0.5 shrink-0 text-muted hover:text-white transition-colors -m-2 p-2"
           aria-label={inList ? 'Remove from list' : 'Add to list'}
         >
           {inList ? <IconCheck width={16} height={16} className="text-brand" /> : <IconPlus width={16} height={16} />}

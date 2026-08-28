@@ -55,7 +55,7 @@ export default function HeroCarousel({ items }: { items: AnimeSummary[] }) {
             transition={{ delay: 0.25, duration: 0.6 }}
           >
             <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
-              <span className="bg-gradient-to-r from-brand2 to-brand px-2.5 py-1 rounded-md">#1 SPOTLIGHT</span>
+              <span className="bg-gradient-to-r from-brand2 to-brand px-2.5 py-1 rounded-md">#1 TRENDING</span>
               {slide.rating != null && (
                 <span className="glass px-2 py-1 rounded-md flex items-center gap-1">
                   <IconStar width={11} height={11} className="text-yellow-400" /> {slide.rating.toFixed(1)}
@@ -76,7 +76,7 @@ export default function HeroCarousel({ items }: { items: AnimeSummary[] }) {
             <div className="flex flex-wrap items-center gap-3 mt-6">
               <Link
                 to={`/anime/${slide.id}`}
-                className="flex items-center gap-2 bg-gradient-to-r from-brand2 to-brand px-6 py-3 rounded-xl font-bold shadow-lg shadow-brand2/40 hover:shadow-brand/50 hover:scale-[1.03] transition-all"
+                className="flex items-center gap-2 bg-gradient-to-r from-brand2 to-brand px-6 py-3 rounded-xl font-bold shadow-lg shadow-brand2/40 hover:shadow-brand/50 hover:scale-[1.03] transition-all btn-shimmer"
               >
                 <IconPlay width={18} height={18} /> Watch Now
               </Link>
@@ -102,17 +102,34 @@ export default function HeroCarousel({ items }: { items: AnimeSummary[] }) {
         </div>
       </div>
 
-      <div className="absolute bottom-5 left-4 md:left-10 flex gap-2">
+      <div className="absolute bottom-3 left-4 md:left-10 flex" role="tablist" aria-label="Carousel slides">
         {items.map((_, i) => (
           <button
             key={i}
             onClick={() => setIndex(i)}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                e.preventDefault()
+                setIndex((i + 1) % items.length)
+              } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                e.preventDefault()
+                setIndex((i - 1 + items.length) % items.length)
+              }
+            }}
+            role="tab"
+            aria-selected={i === index}
             aria-label={`Slide ${i + 1}`}
-            className={classNames(
-              'h-1.5 rounded-full transition-all duration-300',
-              i === index ? 'w-8 bg-brand' : 'w-3 bg-white/25 hover:bg-white/40'
-            )}
-          />
+            tabIndex={i === index ? 0 : -1}
+            /* px/py give a 44px tap target while the visible bar stays thin */
+            className="group/dot px-1 py-3"
+          >
+            <span
+              className={classNames(
+                'block h-1.5 rounded-full transition-all duration-300',
+                i === index ? 'w-8 bg-brand' : 'w-3 bg-white/25 group-hover/dot:bg-white/40'
+              )}
+            />
+          </button>
         ))}
       </div>
     </div>

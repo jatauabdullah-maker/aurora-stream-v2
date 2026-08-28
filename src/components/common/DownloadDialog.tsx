@@ -1,12 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { classNames } from '../../utils/helpers'
-import { IconDownload, IconX } from './Icons'
+import { classNames, formatBytes } from '../../utils/helpers'
+import { IconDownload, IconX, IconCheck, IconInfo } from './Icons'
+import { inspectSources, isMobileDevice, type InspectedSource } from '../../services/extension'
 
 export interface DownloadDialogProps {
   open: boolean
   animeTitle: string
   episodeLabel: string
+  episodeNumber?: number
   poster?: string
   onClose: () => void
   onStart: (quality: string) => void
@@ -14,8 +16,55 @@ export interface DownloadDialogProps {
 
 const QUALITIES = ['1080p', '720p', '360p'] as const
 
-export function DownloadDialog({ open, animeTitle, episodeLabel, poster, onClose, onStart }: DownloadDialogProps) {
+function Spinner({ size = 14 }: { size?: number }) {
+  return (
+    <svg className="animate-spin shrink-0" width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <circle
+        cx="12" cy="12" r="10"
+        stroke="currentColor" strokeWidth="3" strokeLinecap="round"
+        strokeDasharray="31.4" strokeDashoffset="10"
+      />
+    </svg>
+  )
+}
+
+export function DownloadDialog({
+  open, animeTitle, episodeLabel, episodeNumber, poster, onClose, onStart,
+}: DownloadDialogProps) {
   const [quality, setQuality] = useState<string>('720p')
+  const [inspecting, setInspecting] = useState(false)
+  const [inspected, setInspected] = useState<InspectedSource[] | null>(null)
+  const [inspectError, setInspectError] = useState<string | null>(null)
+
+  // reset inspection whenever the dialog opens for a new episode
+  useEffect(() => {
+    if (open) {
+      setInspected(null)
+      setInspectError(null)
+      setInspecting(false)
+    }
+  }, [open, episodeLabel])
+
+  const runInspect = async () => {
+    if (episodeNumber == null) return
+    setInspecting(true)
+    setInspectError(null)
+    const res = await inspectSources({ animeTitle, episodeNumber })
+    setInspecting(false)
+    if (res.ok && res.sources?.length) {
+      setInspected(res.sources)
+      // auto-select the best available quality
+      const best = res.sources.find((s) => s.audio === 'sub') ?? res.sources[0]
+      if (best) setQuality(best.quality)
+    } else {
+      setInspectError(res.error ?? 'No sources found for this episode')
+    }
+  }
+
+  // qualities that actually exist, when we know them
+  const availableQualities = inspected
+    ? [...new Set(inspected.map((s) => s.quality))]
+    : null
 
   return (
     <AnimatePresence>
@@ -32,7 +81,7 @@ export function DownloadDialog({ open, animeTitle, episodeLabel, poster, onClose
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 40, opacity: 0 }}
             transition={{ type: 'spring', damping: 28, stiffness: 350 }}
-            className="glass rounded-2xl w-full max-w-md p-6"
+            className="glass rounded-2xl w-full max-w-md p-6 max-h-[85vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-3">
@@ -48,30 +97,109 @@ export function DownloadDialog({ open, animeTitle, episodeLabel, poster, onClose
               </button>
             </div>
 
-            <p className="text-xs text-muted mt-4 mb-2 font-semibold uppercase tracking-wider">Quality</p>
+            {/* ── Source inspection (like Kaze) ── */}
+            {!isMobileDevice() && episodeNumber != null && (
+              <div className="mt-5">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs text-muted font-semibold uppercase tracking-wider">Available sources</p>
+                  <button
+                    onClick={() => void runInspect()}
+                    disabled={inspecting}
+                    className="flex items-center gap-1.5 text-xs font-semibold text-brand hover:text-white glass px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    {inspecting ? <><Spinner /> Checking…</> : <><IconInfo width={13} height={13} /> {inspected ? 'Re-check' : 'Inspect sources'}</>}
+                  </button>
+                </div>
+
+                {inspecting && (
+                  <p className="text-[11px] text-muted mt-2 leading-relaxed">
+                    Reading the episode page for real quality options — this takes a few seconds.
+                  </p>
+                )}
+
+                {inspectError && (
+                  <div className="mt-2 bg-accent/10 border border-accent/25 rounded-xl px-3 py-2.5">
+                    <p className="text-xs text-accent break-words">{inspectError}</p>
+                  </div>
+                )}
+
+                {inspected && inspected.length > 0 && (
+                  <ul className="mt-2.5 space-y-1.5">
+                    {inspected.map((s, i) => {
+                      const selected = quality === s.quality
+                      return (
+                        <li key={`${s.quality}-${s.group}-${s.audio}-${i}`}>
+                          <button
+                            onClick={() => setQuality(s.quality)}
+                            className={classNames(
+                              'w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left border transition-all duration-200',
+                              selected
+                                ? 'bg-brand/15 border-brand/50 ring-1 ring-brand/30'
+                                : 'bg-surface2 border-line hover:border-brand/40'
+                            )}
+                          >
+                            <span className={classNames('text-sm font-bold tabular-nums shrink-0', selected ? 'text-brand' : '')}>
+                              {s.quality}
+                            </span>
+                            <span className="text-xs text-muted truncate flex-1">{s.group || 'Unknown group'}</span>
+                            <span
+                              className={classNames(
+                                'text-[10px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0',
+                                s.audio === 'dub' ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'
+                              )}
+                            >
+                              {s.audio}
+                            </span>
+                            {s.sizeMB != null && (
+                              <span className="text-[11px] text-muted tabular-nums shrink-0">
+                                {formatBytes(s.sizeMB * 1024 * 1024)}
+                              </span>
+                            )}
+                            {selected && <IconCheck width={14} height={14} className="text-brand shrink-0" />}
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            <p className="text-xs text-muted mt-5 mb-2 font-semibold uppercase tracking-wider">
+              {availableQualities ? 'Confirm quality' : 'Quality'}
+            </p>
             <div className="grid grid-cols-3 gap-2">
-              {QUALITIES.map((q) => (
-                <button
-                  key={q}
-                  onClick={() => setQuality(q)}
-                  className={classNames(
-                    'rounded-xl py-3 text-sm font-bold border transition-colors',
-                    quality === q
-                      ? 'bg-gradient-to-br from-brand2 to-brand border-transparent'
-                      : 'bg-surface2 border-line hover:border-brand/60'
-                  )}
-                >
-                  {q}
-                </button>
-              ))}
+              {QUALITIES.map((q) => {
+                const unavailable = availableQualities ? !availableQualities.includes(q) : false
+                return (
+                  <button
+                    key={q}
+                    onClick={() => setQuality(q)}
+                    disabled={unavailable}
+                    title={unavailable ? 'Not offered for this episode' : undefined}
+                    className={classNames(
+                      'rounded-xl py-3 text-sm font-bold border transition-all duration-200',
+                      quality === q
+                        ? 'bg-gradient-to-br from-brand2 to-brand border-transparent shadow-lg shadow-brand/20'
+                        : unavailable
+                          ? 'bg-surface2/40 border-line/40 text-muted/40 cursor-not-allowed line-through'
+                          : 'bg-surface2 border-line hover:border-brand/60 hover:shadow-[0_0_12px_rgba(107,70,255,0.15)]'
+                    )}
+                  >
+                    {q}
+                  </button>
+                )
+              })}
             </div>
             <p className="text-[11px] text-muted mt-2">
-              If the chosen quality fails, you'll be offered a lower one.
+              {availableQualities
+                ? 'Struck-through options are not offered for this episode.'
+                : "If the chosen quality fails, you'll be offered a lower one."}
             </p>
 
             <button
               onClick={() => onStart(quality)}
-              className="mt-5 w-full flex items-center justify-center gap-2 bg-gradient-to-r from-brand2 to-brand rounded-xl py-3 font-bold shadow-lg shadow-brand2/30 hover:scale-[1.02] transition-transform"
+              className="mt-5 w-full flex items-center justify-center gap-2 bg-gradient-to-r from-brand2 to-brand rounded-xl py-3 font-bold shadow-lg shadow-brand2/30 hover:scale-[1.02] transition-transform btn-shimmer"
             >
               <IconDownload width={17} height={17} /> Start Download
             </button>
@@ -120,7 +248,7 @@ export function DownloadFailureDialog({
             <div className="mt-5 space-y-2">
               <button
                 onClick={onRetry}
-                className="w-full bg-gradient-to-r from-brand2 to-brand rounded-xl py-2.5 font-bold text-sm"
+                className="w-full bg-gradient-to-r from-brand2 to-brand rounded-xl py-2.5 font-bold text-sm btn-shimmer"
               >
                 Retry {quality}
               </button>
@@ -173,15 +301,20 @@ export function NoDownloadMethodDialog({ open, isMobile, onClose, onOpenSettings
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="font-bold text-lg">
-              {isMobile ? '📱 No download source on this device' : '⚡ One-time setup needed'}
+              {isMobile ? 'Streaming on the go!' : '⚡ One-time setup needed'}
             </h3>
 
             {isMobile ? (
-              <p className="text-sm text-muted mt-3 leading-relaxed">
-                Automatic downloads need a browser that supports extensions — try{' '}
-                <b className="text-white">Firefox on Android</b>. On this device, streaming works
-                perfectly but downloads aren't available.
-              </p>
+              <div className="mt-3 space-y-3">
+                <div className="flex justify-center">
+                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-brand2/20 to-brand/20 flex items-center justify-center">
+                    <IconDownload width={28} height={28} className="text-brand" />
+                  </div>
+                </div>
+                <p className="text-sm text-muted leading-relaxed text-center">
+                  Streaming works perfectly on mobile! Downloads are available on desktop browsers with the <b className="text-white">Aurora Downloader</b> extension.
+                </p>
+              </div>
             ) : (
               <>
                 <p className="text-sm text-muted mt-3 leading-relaxed">

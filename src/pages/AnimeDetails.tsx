@@ -9,7 +9,9 @@ import { getProgress } from '../services/storage'
 import { formatDuration, classNames } from '../utils/helpers'
 import AnimeRow from '../components/anime/AnimeRow'
 import { BatchDownloadDialog } from '../components/common/BatchDownloadDialog'
-import { startBatchDownload, startSingleDownload } from '../services/downloadOrchestrator'
+import { DownloadDialog, DownloadFailureDialog } from '../components/common/DownloadDialog'
+import { startBatchDownload, startSingleDownload, lowerQuality } from '../services/downloadOrchestrator'
+import { isMobileDevice } from '../services/extension'
 import {
   IconPlay, IconPlus, IconCheck, IconStar, IconDownload,
   IconChevronDown, IconBack, IconClock,
@@ -33,7 +35,9 @@ export default function AnimeDetails() {
     total: number
     current?: { episode: number; message: string }
   } | null>(null)
-  const { isInWatchlist, toggleWatchlist, settings } = useApp()
+  const [dlEpisode, setDlEpisode] = useState<Episode | null>(null)
+  const [failure, setFailure] = useState<{ episode: Episode; quality: string; error: string } | null>(null)
+  const { isInWatchlist, toggleWatchlist } = useApp()
   const { items: downloads } = useDownloads()
 
   useEffect(() => {
@@ -93,13 +97,27 @@ export default function AnimeDetails() {
 
   const inList = isInWatchlist(anime.id)
 
-  const downloadEpisode = async (ep: Episode) => {
+  // Opens the quality/source picker for a single episode.
+  const openEpisodeDownload = (ep: Episode) => {
+    if (isMobileDevice()) {
+      toast(
+        'Streaming works great here — downloads need the Aurora Downloader on a desktop browser',
+        { icon: '💻', duration: 4500 }
+      )
+      return
+    }
     const existing = downloads.find((d) => d.id === ep.id)
     if (existing && ['pending', 'downloading', 'resolving', 'completed'].includes(existing.status)) {
       return toast(existing.status === 'completed' ? 'Already downloaded' : 'Already in your downloads', {
         icon: existing.status === 'completed' ? '✅' : '⏳',
       })
     }
+    setDlEpisode(ep)
+  }
+
+  const runEpisodeDownload = async (ep: Episode, quality: string) => {
+    setDlEpisode(null)
+    setFailure(null)
     const result = await startSingleDownload(
       {
         episodeId: ep.id,
@@ -108,10 +126,13 @@ export default function AnimeDetails() {
         episodeNumber: ep.number,
         poster: anime.poster,
       },
-      settings.preferredQuality || '720p'
+      quality
     )
-    if (result.ok) toast.success(`Episode ${ep.number}: saved`)
-    else toast.error(`Episode ${ep.number}: ${result.error}`)
+    if (result.ok) {
+      toast.success(`EP ${ep.number} downloaded — ready for offline watching`)
+    } else {
+      setFailure({ episode: ep, quality, error: result.error ?? 'Download failed' })
+    }
   }
 
   const downloadSeason = (season: number) => {
@@ -188,7 +209,7 @@ export default function AnimeDetails() {
         <div className="absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/80 via-black/30 to-transparent" />
         <button
           onClick={() => navigate(-1)}
-          className="absolute bottom-4 right-4 md:bottom-6 md:right-10 glass rounded-full p-2.5 hover:bg-white/15"
+          className="absolute top-4 left-4 md:top-6 md:left-10 glass rounded-full p-2.5 hover:bg-white/15 z-10"
           aria-label="Back"
         >
           <IconBack width={18} height={18} />
@@ -327,7 +348,7 @@ export default function AnimeDetails() {
                               )}
                             </div>
                             <button
-                              onClick={() => downloadEpisode(ep)}
+                              onClick={() => openEpisodeDownload(ep)}
                               className="text-muted hover:text-brand p-2 transition-colors"
                               aria-label={`Download episode ${ep.number}`}
                             >
@@ -358,9 +379,12 @@ export default function AnimeDetails() {
       )}
 
       {batchProgress && (
-        <div className="fixed bottom-20 md:bottom-6 right-4 z-40 glass rounded-2xl px-5 py-4 shadow-2xl min-w-[260px] max-w-[300px]">
+        <div className="fixed bottom-20 md:bottom-6 right-4 z-40 glass rounded-2xl px-5 py-4 shadow-2xl min-w-[260px] max-w-[300px] border border-white/10 ring-1 ring-white/5 backdrop-blur-xl">
           <p className="text-sm font-bold flex items-center gap-2">
-            <span className="animate-spin inline-block">⟳</span> Batch download
+            <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeDasharray="31.4" strokeDashoffset="10" />
+            </svg>
+            Batch download
           </p>
           <p className="text-xs text-brand mt-1 truncate">
             {batchProgress.current?.message ?? `${batchProgress.done} ready · ${batchProgress.failed} failed`}
@@ -386,6 +410,44 @@ export default function AnimeDetails() {
         episodeNumbers={(batchSeason != null ? seasons.get(batchSeason) : anime.episodes)?.map((e) => e.number) ?? []}
         onClose={() => setBatchOpen(false)}
         onStart={(eps, q) => void startBatch(eps, q)}
+      />
+
+      <DownloadDialog
+        open={!!dlEpisode}
+        animeTitle={anime.title}
+        episodeLabel={dlEpisode ? `Episode ${dlEpisode.number}` : ''}
+        episodeNumber={dlEpisode?.number}
+        poster={anime.poster}
+        onClose={() => setDlEpisode(null)}
+        onStart={(q) => {
+          if (dlEpisode) void runEpisodeDownload(dlEpisode, q)
+        }}
+      />
+
+      <DownloadFailureDialog
+        open={!!failure}
+        animeTitle={anime.title}
+        episodeLabel={failure ? `Episode ${failure.episode.number}` : ''}
+        quality={failure?.quality ?? ''}
+        error={failure?.error ?? ''}
+        onClose={() => setFailure(null)}
+        onRetry={() => {
+          if (!failure) return
+          const { episode, quality } = failure
+          setFailure(null)
+          void runEpisodeDownload(episode, quality)
+        }}
+        onLowerQuality={
+          failure && lowerQuality(failure.quality)
+            ? () => {
+                if (!failure) return
+                const lower = lowerQuality(failure.quality)
+                const { episode } = failure
+                setFailure(null)
+                if (lower) void runEpisodeDownload(episode, lower)
+              }
+            : null
+        }
       />
     </div>
   )

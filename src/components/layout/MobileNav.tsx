@@ -20,13 +20,25 @@ export default function MobileNav() {
             end={to === '/'}
             className={({ isActive }) =>
               classNames(
-                'flex flex-col items-center gap-1 py-2.5 text-[10px] font-medium transition-colors',
+                'flex flex-col items-center gap-1 py-2.5 text-[10px] font-medium transition-all duration-200',
                 isActive ? 'text-brand' : 'text-muted'
               )
             }
           >
-            <Icon width={20} height={20} />
-            {label}
+            {({ isActive }) => (
+              <>
+                <span className={classNames(
+                  'transition-transform duration-200',
+                  isActive ? 'scale-110' : 'scale-100'
+                )}>
+                  <Icon width={20} height={20} />
+                </span>
+                {label}
+                {isActive && (
+                  <span className="absolute bottom-1 w-1 h-1 rounded-full bg-brand animate-pulse" />
+                )}
+              </>
+            )}
           </NavLink>
         ))}
       </div>

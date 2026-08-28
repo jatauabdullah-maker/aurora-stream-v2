@@ -11,6 +11,7 @@
   --color-line: rgba(255, 255, 255, 0.08);
 
   --font-display: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-heading: 'Space Grotesk', 'Inter', system-ui, sans-serif;
 }
 
 html {
@@ -22,43 +23,193 @@ body {
   overscroll-behavior-y: none;
 }
 
-::-webkit-scrollbar { width: 10px; height: 8px; }
+/* Display face for headings + the wordmark — Space Grotesk reads more
+   "product" than Inter and matches the Kaze family. */
+h1, h2, h3, .font-heading {
+  font-family: var(--font-heading);
+  letter-spacing: -0.015em;
+}
+
+/* ── Custom scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: #2a3152;
+  background: rgba(139, 124, 248, 0.2);
   border-radius: 8px;
 }
-::-webkit-scrollbar-thumb:hover { background: #3a4270; }
+::-webkit-scrollbar-thumb:hover { background: rgba(139, 124, 248, 0.35); }
 
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-.glass {
-  background: rgba(19, 23, 40, 0.72);
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+/* ── Aurora blob background ── */
+.aurora-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  /* the blobs are intentionally wider than small viewports; clip them here
+     so they never contribute to page scroll width */
+  contain: paint;
+}
+.aurora-bg .blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.4;
+  will-change: transform;
+}
+.aurora-bg .blob-1 {
+  width: 500px; height: 500px;
+  background: radial-gradient(circle, #8b7cf8 0%, transparent 70%);
+  top: -10%; left: -5%;
+  animation: drift1 26s ease-in-out infinite alternate;
+}
+.aurora-bg .blob-2 {
+  width: 450px; height: 450px;
+  background: radial-gradient(circle, #4cc3f0 0%, transparent 70%);
+  top: -5%; right: -8%;
+  animation: drift2 32s ease-in-out infinite alternate;
+}
+.aurora-bg .blob-3 {
+  width: 400px; height: 400px;
+  background: radial-gradient(circle, #3fd68a 0%, transparent 70%);
+  bottom: -15%; left: 40%;
+  animation: drift3 38s ease-in-out infinite alternate;
 }
 
+@keyframes drift1 {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(60px, 50px) scale(1.1); }
+}
+@keyframes drift2 {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(-70px, 60px) scale(1.05); }
+}
+@keyframes drift3 {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(40px, -60px) scale(1.08); }
+}
+
+/* ── Wind streaks ── */
+.wind-streaks {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.wind-streaks .streak {
+  position: absolute;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(139,124,248,0.6) 45%, rgba(76,195,240,0.6) 55%, transparent);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+.wind-streaks .streak-1 { width: 28%; top: 22%; animation: breeze 16s ease-in-out infinite; animation-delay: 0s; }
+.wind-streaks .streak-2 { width: 22%; top: 45%; animation: breeze 19s ease-in-out infinite; animation-delay: 3s; }
+.wind-streaks .streak-3 { width: 35%; top: 62%; animation: breeze 14s ease-in-out infinite; animation-delay: 7s; }
+.wind-streaks .streak-4 { width: 18%; top: 78%; animation: breeze 21s ease-in-out infinite; animation-delay: 2s; }
+.wind-streaks .streak-5 { width: 32%; top: 90%; animation: breeze 17s ease-in-out infinite; animation-delay: 11s; }
+
+@keyframes breeze {
+  0% { transform: translateX(-200px) scaleX(0.4); opacity: 0; }
+  15% { opacity: 0.7; }
+  85% { opacity: 0.5; }
+  100% { transform: translateX(1400px) scaleX(1.4); opacity: 0; }
+}
+
+/* Scale the ambient layer down on phones — full-size blobs on a 390px
+   viewport wash out the whole screen instead of accenting it. */
+@media (max-width: 640px) {
+  .aurora-bg .blob { opacity: 0.28; filter: blur(70px); }
+  .aurora-bg .blob-1 { width: 320px; height: 320px; }
+  .aurora-bg .blob-2 { width: 300px; height: 300px; }
+  .aurora-bg .blob-3 { width: 280px; height: 280px; }
+  .wind-streaks { display: none; }
+}
+
+/* ── Glass effect ── */
+.glass {
+  background: linear-gradient(170deg, rgba(255,255,255,0.03), rgba(255,255,255,0) 40%), rgba(19, 23, 40, 0.72);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 14px 44px rgba(0,0,0,0.25);
+}
+
+/* ── Card with hover glow and left accent bar ── */
+.card-ring {
+  position: relative;
+  transition: transform 0.3s cubic-bezier(.22, 1, .36, 1), box-shadow 0.3s ease, border-color 0.3s ease;
+  border: 1px solid transparent;
+}
+.card-ring::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  border-radius: 14px 0 0 14px;
+  background: linear-gradient(180deg, #8b7cf8, #4cc3f0);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.card-ring:hover {
+  transform: translateY(-4px);
+  border-color: rgba(139, 124, 248, 0.3);
+  box-shadow: 0 12px 40px -8px rgba(139, 124, 248, 0.35);
+}
+.card-ring:hover::before {
+  opacity: 1;
+}
+
+/* ── Shimmer button effect ── */
+.btn-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.btn-shimmer::after {
+  content: '';
+  position: absolute;
+  top: 0; left: -80%;
+  width: 50%; height: 100%;
+  background: linear-gradient(105deg, transparent, rgba(255,255,255,0.16), transparent);
+  transform: skewX(-20deg);
+  transition: left 0.5s cubic-bezier(.22, 1, .36, 1);
+}
+.btn-shimmer:hover::after {
+  left: 130%;
+}
+
+/* ── Text gradient ── */
 .text-gradient {
-  background: linear-gradient(120deg, #c9a6ff, #6b46ff 55%, #ff4d7e);
+  background: linear-gradient(120deg, #c9a6ff, #8b7cf8 55%, #4cc3f0);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
 
+/* ── Hero fade ── */
 .hero-fade {
   background: linear-gradient(to top, #0b0e1a 4%, rgba(11, 14, 26, 0.6) 45%, rgba(11, 14, 26, 0.15) 100%);
 }
 
-.card-ring {
-  transition: transform 0.25s ease, box-shadow 0.25s ease;
+/* ── Screen entrance animation ── */
+@keyframes rise {
+  0% { opacity: 0; transform: translateY(14px); }
+  100% { opacity: 1; transform: translateY(0); }
 }
-.card-ring:hover {
-  transform: translateY(-4px) scale(1.02);
-  box-shadow: 0 12px 40px -8px rgba(107, 70, 255, 0.45);
+.animate-rise {
+  animation: rise 0.45s cubic-bezier(.22, 1, .36, 1) both;
 }
 
+/* ── Custom select dark mode ── */
+select {
+  color-scheme: dark;
+}
+
+/* ── Skeleton loader ── */
 @keyframes shimmer {
   0% { background-position: -400px 0; }
   100% { background-position: 400px 0; }
@@ -69,7 +220,7 @@ body {
   animation: shimmer 1.4s infinite linear;
 }
 
-/* Plyr dark theme overrides */
+/* ── Plyr dark theme overrides ── */
 .plyr {
   --plyr-color-main: #a678ff;
   --plyr-video-background: #000;
@@ -78,4 +229,13 @@ body {
   --plyr-control-icon-size: 16px;
   border-radius: 12px;
   font-family: 'Inter', sans-serif;
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

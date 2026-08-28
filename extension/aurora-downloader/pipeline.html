@@ -2,18 +2,247 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Aurora Downloader — Engine</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aurora Downloader Engine</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
   <style>
-    body { background: #0b0b12; color: #e5e7eb; font: 600 14px system-ui, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-    .card { text-align: center; }
-    .logo { width: 44px; height: 44px; border-radius: 12px; background: linear-gradient(100deg, #7c5cff, #38bdf8); margin: 0 auto 12px; }
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0a0b0f;
+      color: #e5e7eb;
+      font-family: 'Inter', system-ui, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* ── Aurora blob background ──────────────────────────── */
+    .aurora-bg {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    .aurora-blob {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(90px);
+      opacity: .35;
+      will-change: transform;
+    }
+
+    .aurora-blob--violet {
+      width: 520px;
+      height: 520px;
+      background: radial-gradient(circle, #8b7cf8 0%, transparent 70%);
+      top: -15%;
+      left: 20%;
+      animation: drift-violet 26s ease-in-out infinite alternate;
+    }
+
+    .aurora-blob--cyan {
+      width: 480px;
+      height: 480px;
+      background: radial-gradient(circle, #4cc3f0 0%, transparent 70%);
+      top: 30%;
+      right: 10%;
+      animation: drift-cyan 32s ease-in-out infinite alternate;
+    }
+
+    .aurora-blob--green {
+      width: 440px;
+      height: 440px;
+      background: radial-gradient(circle, #3fd68a 0%, transparent 70%);
+      bottom: -10%;
+      left: 40%;
+      animation: drift-green 38s ease-in-out infinite alternate;
+    }
+
+    @keyframes drift-violet {
+      0%   { transform: translate(0, 0) scale(1); }
+      50%  { transform: translate(60px, 40px) scale(1.08); }
+      100% { transform: translate(-30px, 80px) scale(.95); }
+    }
+    @keyframes drift-cyan {
+      0%   { transform: translate(0, 0) scale(1); }
+      50%  { transform: translate(-50px, -30px) scale(1.05); }
+      100% { transform: translate(40px, -60px) scale(.97); }
+    }
+    @keyframes drift-green {
+      0%   { transform: translate(0, 0) scale(1); }
+      50%  { transform: translate(35px, -45px) scale(1.1); }
+      100% { transform: translate(-60px, 20px) scale(.92); }
+    }
+
+    /* ── Wind streaks ────────────────────────────────────── */
+    .wind-streaks {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    .wind-streak {
+      position: absolute;
+      height: 1px;
+      width: 100%;
+      background: linear-gradient(90deg, transparent 0%, #8b7cf8 25%, #4cc3f0 50%, transparent 100%);
+      opacity: .12;
+    }
+
+    .wind-streak:nth-child(1) { top: 18%; animation: breeze 7s 0s linear infinite; }
+    .wind-streak:nth-child(2) { top: 34%; animation: breeze 9s 1.5s linear infinite; }
+    .wind-streak:nth-child(3) { top: 52%; animation: breeze 11s 0.8s linear infinite; }
+    .wind-streak:nth-child(4) { top: 68%; animation: breeze 8s 2.2s linear infinite; }
+    .wind-streak:nth-child(5) { top: 85%; animation: breeze 10s 3.5s linear infinite; }
+
+    @keyframes breeze {
+      0%   { transform: translateX(-100%); opacity: 0; }
+      10%  { opacity: .12; }
+      90%  { opacity: .12; }
+      100% { transform: translateX(100%); opacity: 0; }
+    }
+
+    /* ── Glass card ──────────────────────────────────────── */
+    .engine-card {
+      position: relative;
+      z-index: 10;
+      text-align: center;
+      padding: 48px 52px;
+      max-width: 420px;
+      width: 90%;
+      background: linear-gradient(170deg, rgba(255,255,255,.03) 0%, transparent 40%);
+      background-color: #14161f;
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 14px;
+      box-shadow: 0 14px 44px rgba(0,0,0,.25);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+
+    /* ── Aurora logo ─────────────────────────────────────── */
+    .aurora-logo {
+      width: 56px;
+      height: 56px;
+      margin: 0 auto 20px;
+      border-radius: 14px;
+      background: linear-gradient(100deg, #8b7cf8, #4cc3f0);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 24px rgba(139,124,248,.25);
+    }
+
+    .aurora-logo svg {
+      width: 28px;
+      height: 28px;
+      fill: none;
+    }
+
+    /* ── Text ────────────────────────────────────────────── */
+    .engine-title {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      font-weight: 700;
+      font-size: 22px;
+      color: #ffffff;
+      margin-bottom: 8px;
+      letter-spacing: -.01em;
+    }
+
+    .engine-subtitle {
+      font-family: 'Inter', system-ui, sans-serif;
+      font-weight: 400;
+      font-size: 14px;
+      color: #9aa1b1;
+      line-height: 1.55;
+      margin-bottom: 24px;
+    }
+
+    /* ── Pulsing status dot ──────────────────────────────── */
+    .status-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      color: #9aa1b1;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #4b5068;
+      flex-shrink: 0;
+    }
+
+    .status-dot--idle { background: #4b5068; }
+
+    .status-dot--busy {
+      background: #e5a83b;
+      animation: pulse-dot 1.6s ease-in-out infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(229,168,59,.5); }
+      50%      { box-shadow: 0 0 0 6px rgba(229,168,59,0); }
+    }
+
+    /* ── Reduced motion ──────────────────────────────────── */
+    @media (prefers-reduced-motion: reduce) {
+      .aurora-blob,
+      .wind-streak,
+      .status-dot--busy {
+        animation: none !important;
+      }
+      .wind-streak { display: none; }
+      .aurora-blob { opacity: .2; }
+    }
   </style>
 </head>
 <body>
-  <div class="card">
-    <div class="logo"></div>
-    <div>Aurora Downloader engine is idling — downloads are driven from Aurora.</div>
+  <!-- Aurora ambient background -->
+  <div class="aurora-bg" aria-hidden="true">
+    <div class="aurora-blob aurora-blob--violet"></div>
+    <div class="aurora-blob aurora-blob--cyan"></div>
+    <div class="aurora-blob aurora-blob--green"></div>
   </div>
+
+  <div class="wind-streaks" aria-hidden="true">
+    <div class="wind-streak"></div>
+    <div class="wind-streak"></div>
+    <div class="wind-streak"></div>
+    <div class="wind-streak"></div>
+    <div class="wind-streak"></div>
+  </div>
+
+  <!-- Engine card -->
+  <div class="engine-card">
+    <div class="aurora-logo">
+      <svg viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg">
+        <path d="M8 4.5L23 14L8 23.5V4.5Z" fill="white" fill-opacity=".92" />
+      </svg>
+    </div>
+    <h1 class="engine-title">Aurora Downloader</h1>
+    <p class="engine-subtitle">Engine idling &mdash; downloads are driven from Aurora.</p>
+    <div class="status-row">
+      <span class="status-dot status-dot--idle" id="statusDot"></span>
+      <span id="statusLabel">Idle</span>
+    </div>
+  </div>
+
   <script src="pipeline.js"></script>
 </body>
 </html>

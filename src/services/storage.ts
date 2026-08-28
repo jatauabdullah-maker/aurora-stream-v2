@@ -67,6 +67,10 @@ export function getHistory(): WatchProgress[] {
   return read(K.history, [])
 }
 
+export function clearHistory() {
+  write(K.history, [])
+}
+
 // ---------- Watchlist ----------
 export function getWatchlist(): WatchlistItem[] {
   return read(K.watchlist, [])

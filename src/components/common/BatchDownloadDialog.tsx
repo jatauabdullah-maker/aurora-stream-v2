@@ -120,7 +120,7 @@ export function BatchDownloadDialog({ open, animeTitle, poster, episodeNumbers, 
             <button
               onClick={start}
               disabled={count === 0}
-              className="mt-4 w-full flex items-center justify-center gap-2 bg-gradient-to-r from-brand2 to-brand rounded-xl py-3 font-bold shadow-lg shadow-brand2/30 hover:scale-[1.02] transition-transform disabled:opacity-40"
+              className="mt-4 w-full flex items-center justify-center gap-2 bg-gradient-to-r from-brand2 to-brand rounded-xl py-3 font-bold shadow-lg shadow-brand2/30 hover:scale-[1.02] transition-transform disabled:opacity-40 btn-shimmer"
             >
               <IconDownload width={17} height={17} /> Download {count} Episode{count === 1 ? '' : 's'}
             </button>

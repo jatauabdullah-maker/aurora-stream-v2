@@ -84,6 +84,34 @@ export async function openDeviceDownload(id: number): Promise<boolean> {
   }
 }
 
+export interface InspectedSource {
+  quality: string
+  group: string
+  sizeMB: number | null
+  audio: 'sub' | 'dub'
+}
+
+export interface InspectResult {
+  ok: boolean
+  error?: string
+  title?: string
+  episode?: number
+  sources?: InspectedSource[]
+}
+
+/** Ask the extension what qualities actually exist for this episode.
+ *  This is the "Inspect sources" flow — no download is started. */
+export async function inspectSources(payload: {
+  animeTitle: string
+  episodeNumber: number
+}): Promise<InspectResult> {
+  try {
+    return await post<InspectResult>({ type: 'INSPECT', payload }, 120000)
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Inspection failed' }
+  }
+}
+
 export async function startExtensionDownload(
   payload: ExtensionPayload,
   onProgress: (p: ExtensionProgress) => void

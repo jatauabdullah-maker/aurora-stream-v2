@@ -7,7 +7,14 @@ window.addEventListener('message', (event) => {
   const msg = event.data;
   if (!msg || msg.tag !== TAG) return;
 
-  if (msg.type === 'PING' || msg.type === 'DOWNLOAD' || msg.type === 'LIST_DOWNLOADS' || msg.type === 'OPEN_DOWNLOAD') {
+  if (
+    msg.type === 'PING' ||
+    msg.type === 'DOWNLOAD' ||
+    msg.type === 'INSPECT' ||
+    msg.type === 'CANCEL' ||
+    msg.type === 'LIST_DOWNLOADS' ||
+    msg.type === 'OPEN_DOWNLOAD'
+  ) {
     try {
       chrome.runtime.sendMessage(msg, (resp) => {
         const err = chrome.runtime.lastError?.message;
@@ -31,7 +38,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     window.postMessage({ tag: TAG, type: 'PROGRESS', progress: msg.progress }, window.location.origin);
   } else if (msg.type === 'CHUNK') {
     window.postMessage(
-      { tag: TAG, type: 'CHUNK', data: msg.data, received: msg.received, total: msg.total, done: msg.done },
+      {
+        tag: TAG,
+        type: 'CHUNK',
+        data: msg.data,
+        received: msg.received,
+        total: msg.total,
+        done: msg.done,
+        filename: msg.filename,
+      },
       window.location.origin
     );
     sendResponse({ ok: true });

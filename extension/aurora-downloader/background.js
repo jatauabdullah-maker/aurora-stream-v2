@@ -54,6 +54,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'INSPECT') {
+    (async () => {
+      const engineTabId = await ensureEngineTab();
+      const resp = await chrome.tabs.sendMessage(engineTabId, { type: 'PIPE_INSPECT', payload: msg.payload || {} });
+      sendResponse(resp ?? { ok: false, error: 'Engine did not respond' });
+    })().catch((e) => {
+      sendResponse({ ok: false, error: String((e && e.message) || e).slice(0, 200) });
+    });
+    return true;
+  }
+
   if (msg.type === 'CANCEL') {
     chrome.tabs.query({}).then((tabs) => {
       const engine = tabs.find((t) => t.url && t.url.includes(PIPE_PATH));

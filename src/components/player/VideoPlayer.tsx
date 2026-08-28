@@ -63,15 +63,15 @@ function EmbedPlayer({
         />
       </div>
       {sources.length > 1 && (
-        <div className="flex gap-2 p-3 bg-surface2">
+        <div className="flex gap-2.5 p-3 bg-surface2">
           {sources.map((s) => (
             <button
               key={s.url}
               onClick={() => setActive(s)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+              className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
                 active.url === s.url
-                  ? 'bg-gradient-to-r from-brand2 to-brand text-white'
-                  : 'bg-white/5 text-muted hover:text-white'
+                  ? 'bg-gradient-to-r from-brand2 to-brand text-white shadow-md shadow-brand2/30 btn-shimmer'
+                  : 'bg-white/5 text-muted hover:text-white hover:bg-white/10'
               }`}
             >
               {s.quality}

@@ -70,11 +70,11 @@ export default function Downloads() {
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null)
   const [deviceFiles, setDeviceFiles] = useState<DeviceDownload[] | null>(null)
 
-  useState(() => {
+  useEffect(() => {
     if (navigator.storage?.estimate) {
       navigator.storage.estimate().then((e) => setStorage({ usage: e.usage ?? 0, quota: e.quota ?? 0 }))
     }
-  })
+  }, [])
 
   useEffect(() => {
     listDeviceDownloads().then(setDeviceFiles).catch(() => setDeviceFiles(null))
@@ -169,7 +169,7 @@ export default function Downloads() {
                     </div>
                     <button
                       onClick={() => void playDeviceFile(f)}
-                      className="shrink-0 flex items-center gap-1.5 bg-gradient-to-r from-brand2 to-brand rounded-lg px-3 py-1.5 text-xs font-bold"
+                      className="btn-shimmer shrink-0 flex items-center gap-1.5 bg-gradient-to-r from-brand2 to-brand rounded-lg px-3 py-1.5 text-xs font-bold"
                     >
                       <IconPlay width={13} height={13} /> Play in Aurora
                     </button>
@@ -227,8 +227,11 @@ function Section({
               {d.status === 'error' ? (
                 <p className="text-xs text-accent mt-1">{d.error ?? 'Failed'}</p>
               ) : d.status === 'resolving' && d.resolverProgress ? (
-                <p className="text-xs text-brand mt-1 flex items-center gap-1">
-                  <span className="animate-spin">⟳</span> {d.resolverProgress.message}
+                <p className="text-xs text-brand mt-1 flex items-center gap-1.5">
+                  <svg className="animate-spin shrink-0" width="13" height="13" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeDasharray="31.4" strokeDashoffset="10" />
+                  </svg>
+                  {d.resolverProgress.message}
                 </p>
               ) : (
                 <div className="flex items-center gap-2 mt-1.5">
@@ -254,7 +257,7 @@ function Section({
                 <>
                   <button
                     onClick={() => onPlay(d.id)}
-                    className="flex items-center gap-1.5 bg-gradient-to-r from-brand2 to-brand rounded-lg px-3 py-1.5 text-xs font-bold"
+                    className="btn-shimmer flex items-center gap-1.5 bg-gradient-to-r from-brand2 to-brand rounded-lg px-3 py-1.5 text-xs font-bold"
                   >
                     <IconPlay width={13} height={13} /> Play
                   </button>

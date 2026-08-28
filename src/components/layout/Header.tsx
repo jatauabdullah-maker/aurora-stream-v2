@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { IconSearch, IconLogo, IconDevice } from '../common/Icons'
+import { IconSearch, IconLogo, IconDevice, IconSettings } from '../common/Icons'
 import { usePWAInstall } from '../../hooks/usePWA'
 import { classNames } from '../../utils/helpers'
 
@@ -39,7 +39,7 @@ export default function Header() {
       )}
     >
       <div className="max-w-[1600px] mx-auto flex items-center gap-4 md:gap-8 px-4 md:px-10 h-16">
-        <Link to="/" className="flex items-center gap-2 shrink-0">
+        <Link to="/" className="flex items-center gap-2 shrink-0 -m-2 p-2" aria-label="Aurora Stream home">
           <IconLogo />
           <span className="text-xl font-extrabold tracking-tight text-gradient hidden sm:inline">
             AURORA
@@ -53,12 +53,19 @@ export default function Header() {
               to={l.to}
               className={({ isActive }) =>
                 classNames(
-                  'px-3.5 py-2 rounded-lg text-sm font-medium transition-colors',
-                  isActive ? 'text-white bg-white/10' : 'text-muted hover:text-white hover:bg-white/5'
+                  'px-3.5 py-2 rounded-lg text-sm font-medium transition-colors relative',
+                  isActive ? 'text-white' : 'text-muted hover:text-white hover:bg-white/5'
                 )
               }
             >
-              {l.label}
+              {({ isActive }) => (
+                <>
+                  {l.label}
+                  {isActive && (
+                    <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-0.5 bg-gradient-to-r from-brand2 to-brand rounded-full" />
+                  )}
+                </>
+              )}
             </NavLink>
           ))}
         </nav>
@@ -84,8 +91,12 @@ export default function Header() {
           </button>
         )}
 
-        <Link to="/settings" aria-label="Settings" className="text-muted hover:text-white transition-colors">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <Link
+          to="/settings"
+          aria-label="Settings"
+          className="text-muted hover:text-white transition-colors -m-2.5 p-2.5"
+        >
+          <IconSettings width={20} height={20} />
         </Link>
       </div>
     </motion.header>

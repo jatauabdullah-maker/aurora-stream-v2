@@ -45,32 +45,44 @@ export default function Watch() {
       .finally(() => setLoading(false))
   }, [id])
 
+  const animeTitle = anime?.title
+  const preferredQuality = settings.preferredQuality
+
   useEffect(() => {
     if (!episodeId) return
+    // Wait for the title — resolvers match episodes by anime title, so firing
+    // before it loads produces a wrong (or failed) lookup.
+    if (!animeTitle) return
+
+    let live = true
     setStream(null)
     setOfflineUrl(null)
+    setError(null)
 
     const dl = downloadEngine.getSnapshot().find((d) => d.id === episodeId && d.status === 'completed')
     if (dl) {
       downloadEngine.getBlob(dl.id).then((blob) => {
-        if (blob) setOfflineUrl(URL.createObjectURL(blob))
+        if (live && blob) setOfflineUrl(URL.createObjectURL(blob))
       })
     }
 
-    getStream(episodeId, { animeTitle: anime?.title, preferredQuality: settings.preferredQuality })
-      .then(setStream)
+    getStream(episodeId, { animeTitle, preferredQuality })
+      .then((s) => {
+        if (live) setStream(s)
+      })
       .catch((err) => {
-        if (!dl) {
-          if (err?.code === 'NO_BACKEND' || !backendConfigured()) {
-            setError('NO_SOURCE')
-          } else if (err?.code === 'NO_RESOLVER') {
-            setError('NO_SOURCE')
-          } else {
-            setError('Stream unavailable for this episode.')
-          }
+        if (!live || dl) return
+        if (err?.code === 'NO_BACKEND' || err?.code === 'NO_RESOLVER' || !backendConfigured()) {
+          setError('NO_SOURCE')
+        } else {
+          setError('Stream unavailable for this episode.')
         }
       })
-  }, [episodeId])
+
+    return () => {
+      live = false
+    }
+  }, [episodeId, animeTitle, preferredQuality])
 
   useEffect(() => {
     return () => {
@@ -240,6 +252,15 @@ export default function Watch() {
         </div>
       </div>
 
+      {/* Keyboard shortcuts hint — desktop only */}
+      <div className="hidden md:block mt-3 text-center">
+        <p className="text-[11px] text-muted/60 select-none">
+          <kbd className="px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-[10px] font-mono">Space</kbd> play/pause{' '}
+          <kbd className="px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-[10px] font-mono">←</kbd>{' '}
+          <kbd className="px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-[10px] font-mono">→</kbd> seek 10s
+        </p>
+      </div>
+
       {stream && (stream.sources?.length ?? 0) > 0 && !offlineUrl && (
         <div className="mt-4 flex flex-wrap gap-2 text-xs text-muted">
           {stream.sources.map((s) => (
@@ -281,6 +302,7 @@ export default function Watch() {
         open={dlDialogOpen}
         animeTitle={anime?.title ?? ''}
         episodeLabel={episode ? `Episode ${episode.number}` : ''}
+        episodeNumber={episode?.number}
         poster={anime?.poster}
         onClose={() => setDlDialogOpen(false)}
         onStart={(q) => void runDownload(q)}
@@ -310,9 +332,12 @@ export default function Watch() {
         )
         if (!active) return null
         return (
-          <div className="fixed bottom-20 md:bottom-6 right-4 z-40 glass rounded-2xl px-5 py-4 shadow-2xl min-w-[240px]">
+          <div className="fixed bottom-20 md:bottom-6 right-4 z-40 glass rounded-2xl px-5 py-4 shadow-2xl min-w-[240px] border border-white/10 ring-1 ring-white/5 backdrop-blur-xl">
             <p className="text-sm font-bold flex items-center gap-2">
-              <span className="animate-spin inline-block">⟳</span> Downloading EP {active.episodeNumber}
+              <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeDasharray="31.4" strokeDashoffset="10" />
+              </svg>
+              Downloading EP {active.episodeNumber}
             </p>
             <p className="text-xs text-muted mt-1 truncate max-w-[220px]">
               {active.resolverProgress?.message ?? (active.status === 'downloading' ? `${active.progress}%` : 'Preparing...')}

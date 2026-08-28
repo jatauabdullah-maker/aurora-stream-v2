@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { usePWAInstall } from '../hooks/usePWA'
@@ -27,12 +27,13 @@ export default function Settings() {
   }
 
   // after a reload triggered by Re-check, auto-run the check
-  useState(() => {
+  useEffect(() => {
     if (sessionStorage.getItem('aurora:ext-recheck') === '1') {
       sessionStorage.removeItem('aurora:ext-recheck')
       void runCheck(true)
     }
-  })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const recheckWithReload = () => {
     sessionStorage.setItem('aurora:ext-recheck', '1')
@@ -71,7 +72,7 @@ export default function Settings() {
                   const ok = await promptInstall()
                   if (ok) toast.success('Installed!')
                 }}
-                className="flex items-center gap-2 bg-gradient-to-r from-brand2 to-brand px-4 py-2 rounded-xl text-sm font-bold"
+                className="btn-shimmer flex items-center gap-2 bg-gradient-to-r from-brand2 to-brand px-4 py-2 rounded-xl text-sm font-bold"
               >
                 <IconDevice width={15} height={15} /> Install
               </button>
@@ -129,7 +130,7 @@ export default function Settings() {
                 <a
                   href="/aurora-downloader.zip"
                   download
-                  className="flex items-center justify-center gap-2 bg-gradient-to-r from-brand2 to-brand rounded-xl py-2.5 font-bold text-sm mb-4"
+                  className="btn-shimmer flex items-center justify-center gap-2 bg-gradient-to-r from-brand2 to-brand rounded-xl py-2.5 font-bold text-sm mb-4"
                 >
                   <IconDownload width={15} height={15} /> Step 1 — Download the extension
                 </a>
@@ -168,7 +169,7 @@ export default function Settings() {
 
             <p className="text-[11px] text-muted mt-3 leading-relaxed">
               📱 Mobile: automatic downloads need a browser that supports extensions — use
-              <b className="text-white"> Firefox on Android</b>. On iOS and Chrome Android, streaming works great but
+              <b className="text-white"> Firefox or Chrome on Android</b>. On iOS, streaming works great but
               downloads aren't possible.
             </p>
           </div>

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
+import { clearHistory } from '../services/storage'
 import { formatDuration } from '../utils/helpers'
-import { IconLibrary, IconClock, IconStar, IconX } from '../components/common/Icons'
+import { IconLibrary, IconClock, IconStar, IconX, IconTrash } from '../components/common/Icons'
 import toast from 'react-hot-toast'
 
 type Tab = 'list' | 'continue' | 'history'
@@ -17,7 +18,22 @@ export default function Library() {
 
   return (
     <div className="px-4 md:px-10 pt-24 max-w-[1400px] mx-auto">
-      <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">My Library</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">My Library</h1>
+        {tab === 'history' && history.length > 0 && (
+          <button
+            onClick={() => {
+              if (!window.confirm('Clear your entire watch history?')) return
+              clearHistory()
+              refreshProgress()
+              toast.success('History cleared')
+            }}
+            className="text-sm text-muted hover:text-white flex items-center gap-1.5 transition-colors"
+          >
+            <IconTrash width={15} height={15} /> Clear history
+          </button>
+        )}
+      </div>
 
       <div className="flex gap-2 mt-5">
         {(
@@ -57,10 +73,11 @@ export default function Library() {
                   </Link>
                   <button
                     onClick={() => {
+                      if (!window.confirm(`Remove "${w.title}" from My List?`)) return
                       toggleWatchlist(w)
                       toast.success('Removed from My List')
                     }}
-                    className="absolute top-2 right-2 glass rounded-full p-1.5 opacity-0 group-hover:opacity-100 transition-opacity hover:text-accent"
+                    className="absolute top-2 right-2 glass rounded-full p-1.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity hover:text-accent"
                     aria-label="Remove"
                   >
                     <IconX width={13} height={13} />
